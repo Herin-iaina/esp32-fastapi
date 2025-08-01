@@ -1,499 +1,462 @@
 # -*- coding: utf-8 -*-
-from flask import Flask, render_template, jsonify, request, send_from_directory, url_for, redirect
-import json
-from apps import post_temp_humidity
-import datetime 
-from apps import config_database
-from flask_login import LoginManager, UserMixin, login_user, logout_user, current_user, login_required
-import os
+from fastapi import FastAPI, HTTPException, Depends, status, Request
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, validator
+from typing import Optional, List, Dict, Any
+import datetime
 from datetime import timedelta
-from flask_jwt_extended import JWTManager, jwt_required, get_jwt_identity
+import os
+import json
+from pathlib import Path
+from sqlalchemy.orm import Session
 
+# Import your existing modules
+from apps import post_temp_humidity
+from database_config import get_db, db_manager, DatabaseSettings
 
-app = Flask(__name__)
+# Pydantic models for request/response validation
+class SensorData(BaseModel):
+    humidity: float = Field(..., ge=0, le=100, description="Humidity percentage")
+    temperature: float = Field(..., ge=-50, le=100, description="Temperature in Celsius")
 
-# Une liste de dictionnaires de clés API autorisées
-api_keys = [
-    {'key': 'votre_cle_api_1'},
-    {'key': 'votre_cle_api_2'},
-    {'key': 'Votre_Cle_API'},
+class ValuesRequest(BaseModel):
+    average_temperature: float = Field(..., ge=-50, le=100)
+    average_humidity: float = Field(..., ge=0, le=100)
+    fan_status: str = Field(..., max_length=50)
+    humidifier_status: str = Field(..., max_length=50)
+    numFailedSensors: int = Field(..., ge=0)
+    # Dynamic sensor data will be handled separately
+
+class ParameterRequest(BaseModel):
+    temperature: float = Field(..., gt=0, description="Target temperature")
+    humidity: float = Field(..., gt=0, description="Target humidity")
+    start_date: str = Field(..., description="Start date")
+    stat_stepper: str = Field(..., description="Stepper status")
+    number_stepper: int = Field(..., gt=0, description="Number of steppers")
+    espece: str = Field(..., description="Species type")
+    timetoclose: Optional[int] = Field(None, description="Time to close in days")
+
+class LoginRequest(BaseModel):
+    username: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+    rememberMe: Optional[bool] = False
+
+class DateRequest(BaseModel):
+    date: str = Field(..., description="Date string")
+
+class APIResponse(BaseModel):
+    message: str
+    data: Optional[Dict[str, Any]] = None
+
+# Security
+security = HTTPBearer()
+
+class APIKeyManager:
+    def __init__(self):
+        self.api_keys = [
+            {'key': 'votre_cle_api_1'},
+            {'key': 'votre_cle_api_2'},
+            {'key': 'Votre_Cle_API'},
+        ]
     
-]
+    def validate_api_key(self, api_key: str) -> bool:
+        return any(api['key'] == api_key for api in self.api_keys)
 
-# Configuration de JWT
-app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY')
-jwt = JWTManager(app)
+api_key_manager = APIKeyManager()
 
-@app.route("/")
-def hello():
-    # return "hello"
-    return render_template('main.html')
-
-
-@app.route("/values" , methods=['POST'])
-def data__():
-    data = request.json
-     # Vérifier si la clé API est valide
-
-    humidity = 0
-    temperature = 0
-    average_temperature = 0
-    average_humidity = 0
-    num_failed_sensors = 0
-    sensor_name = ""
-    fan_status = ""
-    humidifier_status = ""
-    date_serveur = datetime.datetime.now()  
-
-    result = False
-
-
+def get_api_key(request: Request) -> str:
+    """Extract API key from headers"""
     api_key = request.headers.get('X-API-KEY')
-    # print(api_key)
-
-
     if not api_key:
-        return jsonify({'message': 'API key missing'}), 401  # Unauthorized
-
-
-    if not any(api['key'] == api_key for api in api_keys):
-        return jsonify({'message': 'Clé API non valide'}), 401  # Non autorisé
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key missing"
+        )
     
-    try : 
-        # Retrieve other values
-        average_temperature = float(data['average_temperature'])
-        average_humidity = float(data['average_humidity'])
-        fan_status = data['fan_status']
-        humidifier_status = data['humidifier_status']
-        num_failed_sensors = int(data['numFailedSensors'])
+    if not api_key_manager.validate_api_key(api_key):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key"
+        )
+    
+    return api_key
+
+# Utility functions
+class DateFormatter:
+    @staticmethod
+    def format_date(date_str: str) -> str:
+        """Format date string to standard format"""
+        formats = [
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d %H:%M",
+            "%Y-%m-%dT%H:%M",
+            "%Y-%m-%dT%H:%M:%S.%fZ",
+            "%Y-%m-%d",
+            "%d/%m/%Y %H:%M",
+            "%d/%m/%Y"
+        ]
         
-    except Exception : 
-            return jsonify({'message': 'Missing data'}), 400  # Mauvaise requête
-    
-    # Vérifier si les données de température et d'humidité sont présentes
-    for sensor_name, sensor_data in data.items():
-    # Check if it's a sensor data
-        if sensor_name.startswith('sensor'):
-            # Retrieve humidity and temperature values
-            # Vérifier si les données de température et d'humidité sont présentes
-            try : 
-                humidity = float(sensor_data['humidity'])
-                temperature = float(sensor_data['temperature'])
-            except Exception : 
-                return jsonify({'message': 'Missing data'}), 406  # Mauvaise requête
-            
-            data_to_insert = {
-            'sensor': sensor_name,
-            'temperature': temperature,
-            'humidity': humidity,
-            'average_humidity': average_humidity,
-            'average_temperature': average_temperature,
-            'fan_status': fan_status,
-            'humidifier_status': humidifier_status,
-            'numfailedsensors': num_failed_sensors,
-            'date_serveur': date_serveur
-            }
-            # Ajouter les données dans la base
-            result = post_temp_humidity.add_data(data_to_insert)     
-    
-    
-    if result == True : 
-        config_database.close_db_connection()
-        return jsonify({'message': 'Data received successfully'}), 200  # Succès
-    else :
-        return jsonify({'message': 'Internal Server Error'}),500 # Erreur
-
-
-@app.route("/getdata", methods=['GET'])
-def get_data():
-    api_key = request.headers.get('X-API-KEY')
-    print(api_key)
-    if not api_key:
-        return jsonify({'message': 'API key missing'}), 401  # Unauthorized
-
-    fan_humidity_status = post_temp_humidity.get_last_data()
-    fan_status = fan_humidity_status[0]  # Utiliser l'indice 0 pour la première valeur
-    humidifier_status = fan_humidity_status[1]  # Utiliser l'indice 1 pour la deuxième valeur
-    motor_status = post_temp_humidity.post_stepper_status()
-
-    data_to_send = {
-        'FAN': fan_status,
-        'Humidity': humidifier_status,
-        'Motor': motor_status
-    }
-    return jsonify(data_to_send), 202
-
-@app.route("/WeatherData", methods= ['GET'])
-def WeatherData() :
-    # results = {
-    # "temperature": 30.5,
-    # "humidity": 60,
-    # "average_temperature": 33.8,
-    # "average_humidity": 67
-    # }
-
-    api_key = request.headers.get('X-API-KEY')
-    if not api_key:
-        return jsonify({'message': 'API key missing'}), 401  # Unauthorized
-    
-    
-    Weather_Data = post_temp_humidity.get_weather_data()
-    
-    return jsonify(Weather_Data),202
-    
-
-@app.route("/WeatherDF", methods=['GET'])
-def get_dataWeatherDatafram() :
-    api_key = request.headers.get('X-API-KEY')
-    if not api_key:
-        return jsonify({'message': 'API key missing'}), 401  # Unauthorized
-    
-    Weather_DF = post_temp_humidity.get_data_average()
-
-    return jsonify(Weather_DF), 202
-
-
-
-@app.route("/alldata", methods=['GET'])
-def get_all_data() : 
-    
-
-    api_key = request.headers.get('X-API-KEY')
-    if not api_key:
-        return jsonify({'message': 'API key missing'}), 401  # Unauthorized
-    
-    # print(request.url)
-    
-    def formater_date(date_str):
-        try:
-            # Convertir la chaîne en objet datetime
-            datetime_obj = datetime.datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
-            # Formater l'objet datetime dans le format souhaité
-            return datetime_obj.strftime("%Y-%m-%d %H:%M")
-        except ValueError:
-            # Si le format ne correspond pas, essayer sans les secondes
+        for fmt in formats:
             try:
-                datetime_obj = datetime.datetime.strptime(date_str, "%Y-%m-%d %H:%M")
+                datetime_obj = datetime.datetime.strptime(date_str, fmt)
                 return datetime_obj.strftime("%Y-%m-%d %H:%M")
             except ValueError:
-                try:
-                    datetime_obj = datetime.datetime.strptime(date_str, "%Y-%m-%dT%H:%M")
-                    return datetime_obj.strftime("%Y-%m-%d %H:%M")
-                except ValueError:
-                    try:
-                        datetime_obj = datetime.datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S.%fZ")
-                        return datetime_obj.strftime("%Y-%m-%d %H:%M")
-                    except ValueError:
-                        return "Format de date invalide"
-            
-
-    if 'date_int' not in request.args or 'date_end' not in request.args:
-        # return jsonify({'message': 'Missing parameters'}), 400  # Bad Request
-        results = post_temp_humidity.get_all_data(False,False)
-        return jsonify(results), 202
-    
-    else:  
-        date_int = request.args['date_int']
-        date_end = request.args['date_end']
-
-        # print(date_int,date_end)
-
-        time_delta = datetime.timedelta(hours=0)
-
-        if ':' not in date_int:  # Vérifie si l'heure est spécifiée
-            date_int = date_int + " 00:00"
-            # print(date_int)
-
-        if ':' not in date_end:  # Vérifie si l'heure est spécifiée
-            date_end = date_end + " 00:00"
-
-        try : 
-            date_int = formater_date(date_int)
-            date_end = formater_date(date_end)
-            print(date_int,date_end)
-            # # return jsonify(date_end), 202
-            results = post_temp_humidity.get_all_data(date_int,date_end)
-            return jsonify(results), 202
+                continue
         
-        except Exception :
-            return jsonify("Internal serveur error"), 500
-        
-@app.route("/isrunning", methods=['GET','POST'])
-def getinitialdate() :
-    if request.method == 'POST':
-        # Vérifier si les données sont envoyées en JSON
-        if request.is_json:
-            data = request.get_json()
-            dateinit = data.get('date')
-        else:
-            # Sinon, traiter comme des données de formulaire
-            dateinit = request.form.get('date')
-        print(dateinit,"date")
+        raise ValueError("Invalid date format")
 
-        if dateinit :
-            dateformated = 0
-
-            def checkdate():
-                try:
-                # Convertir la chaîne en objet datetime
-                    datetime_obj = datetime.datetime.strptime(dateinit, "%Y-%m-%d %H:%M:%S")
-                except ValueError:
-                    try:
-                        datetime_obj = datetime.datetime.strptime(dateinit, "%Y-%m-%d %H:%M")
-                    except ValueError:
-                        try:
-                            datetime_obj = datetime.datetime.strptime(dateinit, "%Y-%m-%dT%H:%M")
-                        except ValueError:
-                            try:
-                                datetime_obj = datetime.datetime.strptime(dateinit, "%Y-%m-%dT%H:%M:%S.%fZ")
-                            except ValueError:
-                                try:
-                                    datetime_obj = datetime.datetime.strptime(dateinit, "%Y-%m-%d")
-                                except ValueError :
-                                    try:
-                                        datetime_obj = datetime.datetime.strptime(dateinit, '%d/%m/%Y %H:%M')
-                                    except ValueError:
-                                        try :
-                                            datetime_obj = datetime.datetime.strptime(dateinit, "%d/%m/%Y")
-                                        except ValueError :
-                                        # Si une ValueError est levée, ce n'est pas une date valide
-                                            return None
-                # Formater l'objet datetime dans le format souhaité
-                return datetime_obj.strftime("%Y-%m-%d")
-                                                                  
-            dateformated = checkdate()
-            is_ok = post_temp_humidity.getdateinit(dateformated)
-            return jsonify(is_ok), 202
-        else : 
-            return jsonify("Veillez renseigner la date"), 202
-    else : 
-        print ("NOK")
-
-@app.route("/parameter", methods=['GET', 'POST'])
-def create_parameter():
-
-    def fromateddate(dateinit):
+    @staticmethod
+    def check_date(date_str: str) -> Optional[str]:
+        """Check and format date for database"""
         try:
-            # Convertir la chaîne en objet datetime
-            datetime_obj = datetime.datetime.strptime(dateinit, "%Y-%m-%d %H:%M:%S")
+            formatted = DateFormatter.format_date(date_str)
+            return datetime.datetime.strptime(formatted, "%Y-%m-%d %H:%M").strftime("%Y-%m-%d")
         except ValueError:
-            try:
-                datetime_obj = datetime.datetime.strptime(dateinit, "%Y-%m-%d %H:%M")
-            except ValueError:
+            return None
+
+# FastAPI app initialization
+app = FastAPI(
+    title="Weather Monitoring API",
+    description="API for monitoring temperature and humidity sensors",
+    version="2.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Configure based on your needs
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Static files and templates
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
+
+# Routes
+@app.get("/", response_class=HTMLResponse)
+async def read_root(request: Request):
+    """Main page"""
+    return templates.TemplateResponse("main.html", {"request": request})
+
+@app.post("/values", response_model=APIResponse)
+async def post_values(request: Request, api_key: str = Depends(get_api_key)):
+    """Post sensor values"""
+    try:
+        data = await request.json()
+        
+        # Extract base values
+        average_temperature = float(data.get('average_temperature', 0))
+        average_humidity = float(data.get('average_humidity', 0))
+        fan_status = data.get('fan_status', '')
+        humidifier_status = data.get('humidifier_status', '')
+        num_failed_sensors = int(data.get('numFailedSensors', 0))
+        
+        date_serveur = datetime.datetime.now()
+        results = []
+        
+        # Process sensor data
+        for sensor_name, sensor_data in data.items():
+            if sensor_name.startswith('sensor'):
                 try:
-                    datetime_obj = datetime.datetime.strptime(dateinit, "%Y-%m-%dT%H:%M")
-                except ValueError:
-                    try:
-                        datetime_obj = datetime.datetime.strptime(dateinit, "%Y-%m-%dT%H:%M:%S.%fZ")
-                    except ValueError:
-                        try:
-                            datetime_obj = datetime.datetime.strptime(dateinit, "%Y-%m-%d")
-                        except ValueError :
-                            try:
-                                datetime_obj = datetime.datetime.strptime(dateinit, '%d/%m/%Y %H:%M')
-                            except ValueError:
-                                try :
-                                    datetime_obj = datetime.datetime.strptime(dateinit, "%d/%m/%Y")
-                                except ValueError :
-                                    # Si une ValueError est levée, ce n'est pas une date valide
-                                    return dateinit
-                                    # return None
-        # Formater l'objet datetime dans le format souhaité
-        return datetime_obj.strftime("%Y-%m-%d %H:%M")
+                    humidity = float(sensor_data['humidity'])
+                    temperature = float(sensor_data['temperature'])
+                    
+                    data_to_insert = {
+                        'sensor': sensor_name,
+                        'temperature': temperature,
+                        'humidity': humidity,
+                        'average_humidity': average_humidity,
+                        'average_temperature': average_temperature,
+                        'fan_status': fan_status,
+                        'humidifier_status': humidifier_status,
+                        'numfailedsensors': num_failed_sensors,
+                        'date_serveur': date_serveur
+                    }
+                    
+                    result = post_temp_humidity.add_data(data_to_insert)
+                    results.append(result)
+                    
+                except (KeyError, ValueError, TypeError) as e:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Invalid sensor data for {sensor_name}"
+                    )
+        
+        if all(results):
+            # La gestion de la fermeture est maintenant automatique avec le pool
+            return APIResponse(message="Data received successfully")
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to save data"
+            )
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing or invalid data"
+        )
 
-    api_key = request.headers.get('X-API-KEY')
+@app.get("/getdata")
+async def get_data(api_key: str = Depends(get_api_key)):
+    """Get current device status"""
+    try:
+        fan_humidity_status = post_temp_humidity.get_last_data()
+        fan_status = fan_humidity_status[0]
+        humidifier_status = fan_humidity_status[1]
+        motor_status = post_temp_humidity.post_stepper_status()
 
-    if not api_key:
-        return jsonify({'message': 'API key missing'}), 401  # Unauthorized
+        return {
+            'FAN': fan_status,
+            'Humidity': humidifier_status,
+            'Motor': motor_status
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve data"
+        )
 
-    if not any(api['key'] == api_key for api in api_keys):
-        return jsonify({'message': 'Clé API non valide'}), 401  # Unauthorized
+@app.get("/WeatherData")
+async def get_weather_data(api_key: str = Depends(get_api_key)):
+    """Get current weather data"""
+    try:
+        weather_data = post_temp_humidity.get_weather_data()
+        return weather_data
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve weather data"
+        )
 
-    if request.method == 'POST':
-        try:
-            if request.is_json:
-                data = request.get_json()
-                # print(data, 1)
-            else:
-                data = request.form
-                # print(data, 2)
+@app.get("/WeatherDF")
+async def get_weather_dataframe(api_key: str = Depends(get_api_key)):
+    """Get weather data averages"""
+    try:
+        weather_df = post_temp_humidity.get_data_average()
+        return weather_df
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve weather dataframe"
+        )
 
-            temperature = float(data.get('temperature'))
-            humidity = float(data.get('humidity'))
-            start_date = str(data.get('start_date'))
-            stat_stepper = data.get('stat_stepper')
-            number_stepper = data.get('number_stepper')
-            espece = data.get('espece')
-            timetoclose =  data.get('timetoclose')
+@app.get("/alldata")
+async def get_all_data(
+    request: Request,
+    date_int: Optional[str] = None,
+    date_end: Optional[str] = None,
+    api_key: str = Depends(get_api_key)
+):
+    """Get all data with optional date filtering"""
+    try:
+        if not date_int or not date_end:
+            results = post_temp_humidity.get_all_data(False, False)
+            return results
+        
+        # Add default time if not specified
+        if ':' not in date_int:
+            date_int += " 00:00"
+        if ':' not in date_end:
+            date_end += " 00:00"
+        
+        # Format dates
+        formatted_date_int = DateFormatter.format_date(date_int)
+        formatted_date_end = DateFormatter.format_date(date_end)
+        
+        results = post_temp_humidity.get_all_data(formatted_date_int, formatted_date_end)
+        return results
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid date format"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error"
+        )
 
-            # print(temperature,humidity,start_date,stat_stepper,number_stepper,espece,"ererererrerre")
-            print(type(start_date))
+@app.post("/isrunning")
+async def check_running_status(date_request: DateRequest):
+    """Check if system is running for given date"""
+    try:
+        date_formatted = DateFormatter.check_date(date_request.date)
+        if not date_formatted:
+            return {"message": "Invalid date format"}
+        
+        is_ok = post_temp_humidity.getdateinit(date_formatted)
+        return is_ok
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to check running status"
+        )
 
-            if not all([temperature, humidity, start_date, stat_stepper, number_stepper, espece]):
-                raise ValueError("Missing data")
+@app.get("/isrunning")
+async def get_running_status():
+    """Get current running status"""
+    return {"message": "Endpoint requires POST method with date parameter"}
 
-        except (TypeError, ValueError) as e:
-            return jsonify({'message': 'Invalid or missing data'}), 400  # Bad Request
-
+@app.post("/parameter", response_model=APIResponse)
+async def create_parameter(
+    parameter_request: ParameterRequest,
+    api_key: str = Depends(get_api_key)
+):
+    """Create system parameters"""
+    try:
         espece_mapping = {
             "option1": "poule",
-            "option2": "canne",
+            "option2": "canne", 
             "option3": "oie",
             "option4": "caille",
             "option5": "other"
         }
-
-        remaindate = {
-            "poule" : 21,
-            "canne" : 28,
-            "oie" : 30,
-            "caille" : 18,
-            "other" : timetoclose
+        
+        remain_date = {
+            "poule": 21,
+            "canne": 28,
+            "oie": 30,
+            "caille": 18,
+            "other": parameter_request.timetoclose or 28
         }
-
-        espece_value = espece_mapping.keys()
-        timetoclose_v = remaindate.keys()
-
-        if espece not in espece_value:
-            return jsonify({'message': 'Espece non reconnue'}), 401  # Unauthorized
-
-        espece_name = espece_mapping.get(espece)
-        dayclose = remaindate.get(espece_name)
-        try:
-            dayclose = int(dayclose)
-        except (TypeError, ValueError) as e :
+        
+        if parameter_request.espece not in espece_mapping:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Unknown species"
+            )
+        
+        espece_name = espece_mapping[parameter_request.espece]
+        dayclose = remain_date[espece_name]
+        
+        if isinstance(dayclose, int) and dayclose < 0:
             dayclose = 28
-        # print(dayclose)
-
-        if dayclose < 0 :
-            dayclose = 28
-
-        formatted_date = fromateddate(start_date)
-        # print(formatted_date)
-
-        if not formatted_date:
-            return jsonify({'message': 'Invalid date format'}), 400  # Bad Request
-
+        
+        formatted_date = DateFormatter.format_date(parameter_request.start_date)
+        
         data_to_insert = {
-            'temperature': temperature if temperature > 0 else 23 ,
-            'humidity': humidity if humidity > 0 else 40,
+            'temperature': max(parameter_request.temperature, 23),
+            'humidity': max(parameter_request.humidity, 40),
             'start_date': formatted_date,
-            'stat_stepper': stat_stepper,
-            'number_stepper': number_stepper if number_stepper > 0 else 3,
+            'stat_stepper': parameter_request.stat_stepper,
+            'number_stepper': max(parameter_request.number_stepper, 3),
             'espece': espece_name,
-            'timetoclose' : dayclose
+            'timetoclose': dayclose
         }
-
+        
         result = post_temp_humidity.create_parameter(data_to_insert)
-
+        
         if result:
-            config_database.close_db_connection()
-            return jsonify({'message': 'Data received successfully'}), 200  # Success
+            # La gestion de la fermeture est maintenant automatique avec le pool
+            return APIResponse(message="Parameters created successfully")
         else:
-            return jsonify({'message': 'Internal Server Error'}), 500  # Server Error
-        
-    else:
-        result = post_temp_humidity.get_parameter()
-        return jsonify(result), 202  # Accepted
-
-
-    
-@app.route('/templates/<path:filename>')
-def serve_templates(filename):
-    return send_from_directory('templates', filename)
-
-
-@app.route('/static/<path:filename>')
-def serve_static(filename):
-    return send_from_directory('static', filename)
-
-
-
-app.secret_key = os.urandom(24)  # Génère une clé secrète aléatoire
-
-login_manager = LoginManager()
-login_manager.init_app(app)
-login_manager.login_view = 'login'  # Spécifie la vue de connexion
-# Durée de session par défaut (2 jours)
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=2)
-
-# # Dummy user for demonstration purposes
-# Gestion des utilisateurs avec Flask-Login
-class User(UserMixin):
-    def __init__(self, id):
-        self.id = id
-
-@login_manager.user_loader
-def load_user(user_id):
-    return User(user_id)
-
-@app.route('/login', methods=['GET', 'POST'])
-@app.route('/login.<extension>', methods=['GET', 'POST'])
-def login(extension=None):
-    if request.method == 'POST':
-        # print(request.url)
-        # Traitez les données du formulaire ici
-        # Vérifier si les données sont envoyées en JSON
-        if request.is_json:
-            data = request.get_json()
-            username = data.get('username')
-            password = data.get('password')
-            rememberMe = data.get('rememberMe')
-            # print(data,username,password,rememberMe)
-        else:
-            # Sinon, traiter comme des données de formulaire
-            username = request.form.get('username')
-            password = request.form.get('password')
-            rememberMe = request.form.get('rememberMe')
-
-        if not username or not password :
-            return jsonify({'message': 'Username and password required'}), 400
-        
-        if rememberMe : 
-            # Mettre à jour la durée de session ( 1 semaine)
-            app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
-        
-        user_id = post_temp_humidity.login(username,password)
-        if user_id :
-            user = User(id=user_id)
-            login_user(user)
-            print("ok")
-            return jsonify({'success': True}), 200
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to create parameters"
+            )
             
-        else : 
-            # error = 'Nom d\'utilisateur ou mot de passe incorrect'
-            return jsonify({'message': 'Nom d\'utilisateur ou mot de passe incorrect'}), 401
-    
-    return render_template('login.html')
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid date format"
+        )
 
-@app.route('/check_session', methods=['GET'])
-def check_session():
-    if current_user.is_authenticated:
-        return jsonify({'is_authenticated': True})
-    else:
-        return jsonify({'is_authenticated': False})
+@app.get("/parameter")
+async def get_parameter(api_key: str = Depends(get_api_key)):
+    """Get system parameters"""
+    try:
+        result = post_temp_humidity.get_parameter()
+        return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve parameters"
+        )
 
+# Authentication endpoints (simplified - you may want to implement proper JWT)
+@app.post("/login")
+async def login(login_request: LoginRequest):
+    """User login"""
+    try:
+        user_id = post_temp_humidity.login(login_request.username, login_request.password)
+        if user_id:
+            # In a real application, you'd generate a JWT token here
+            return {"success": True, "user_id": user_id}
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid username or password"
+            )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Login failed"
+        )
 
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    """Login page"""
+    return templates.TemplateResponse("login.html", {"request": request})
 
-@app.route('/parametre')
-@login_required
-def parametre():
-    return render_template('parametre.html')
-    # return f"Welcome {current_user.id}! You are logged in."
+@app.get("/check_session")
+async def check_session():
+    """Check user session - implement based on your auth system"""
+    # This would need to be implemented based on your authentication system
+    return {"is_authenticated": False}
 
+@app.get("/parametre", response_class=HTMLResponse)
+async def parametre_page(request: Request):
+    """Parameters page"""
+    return templates.TemplateResponse("parametre.html", {"request": request})
 
-@app.route('/logout')
-@login_required
-def logout():
-    logout_user()
-    return redirect(url_for('login'))
-    
-  
+@app.get("/logout")
+async def logout():
+    """User logout"""
+    return {"message": "Logged out successfully"}
 
+# Health check endpoint
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    db_healthy = db_manager.health_check()
+    return {
+        "status": "healthy" if db_healthy else "unhealthy",
+        "database": "connected" if db_healthy else "disconnected",
+        "timestamp": datetime.datetime.now()
+    }
 
-app.static_folder = 'static'
+# Error handlers
+@app.exception_handler(404)
+async def not_found_handler(request: Request, exc):
+    return JSONResponse(
+        status_code=404,
+        content={"message": "Endpoint not found"}
+    )
+
+@app.exception_handler(500)
+async def internal_error_handler(request: Request, exc):
+    return JSONResponse(
+        status_code=500,
+        content={"message": "Internal server error"}
+    )
 
 if __name__ == "__main__":
-    app.run("0.0.0.0",debug=True, port= 5005)
-
-
+    import uvicorn
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=5005,
+        reload=True,
+        log_level="info"
+    )

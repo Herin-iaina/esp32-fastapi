@@ -31,3 +31,5 @@
 *.conf
 *.log
 *.txt
+*.env
+.env
