@@ -1,0 +1,215 @@
+body {
+    font-family: 'Roboto', sans-serif;
+    margin: 0; background: #f5f6fa;
+    color: #222;
+}
+header {
+    background: #222e50;
+    color: #fff;
+    padding: 0;
+    box-shadow: 0 2px 8px #0001;
+}
+nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    max-width: 1200px;
+    margin: auto;
+    padding: 0.5rem 1rem;
+}
+.nav-links {
+    display: flex;
+    gap: 2rem;
+    align-items: center;
+}
+.nav-links a {
+    color: #fff;
+    text-decoration: none;
+    font-weight: 500;
+    transition: color 0.2s;
+}
+.nav-links a:hover {
+    color: #f9d923;
+}
+.user-menu {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+.user-avatar {
+    width: 38px; height: 38px;
+    border-radius: 50%;
+    background: #f9d923;
+    color: #222e50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.3rem;
+    cursor: pointer;
+    margin-left: 1rem;
+}
+.dropdown {
+    display: none;
+    position: absolute;
+    right: 0; top: 48px;
+    background: #fff;
+    color: #222;
+    min-width: 140px;
+    box-shadow: 0 2px 8px #0002;
+    border-radius: 8px;
+    z-index: 10;
+}
+.dropdown a {
+    display: block;
+    padding: 0.8rem 1rem;
+    color: #222;
+    text-decoration: none;
+}
+.dropdown a:hover {
+    background: #f5f6fa;
+}
+.user-menu.open .dropdown {
+    display: block;
+}
+main {
+    max-width: 1200px;
+    margin: 2rem auto 1rem auto;
+    padding: 0 1rem;
+}
+.section {
+    margin-bottom: 2.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2rem;
+    justify-content: space-between;
+}
+.donut-card {
+    background: #fff;
+    border-radius: 18px;
+    box-shadow: 0 2px 8px #0001;
+    padding: 1.5rem 1rem;
+    flex: 1 1 220px;
+    min-width: 220px;
+    max-width: 320px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.donut-title {
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+.chart-container {
+    width: 120px; height: 120px;
+    margin-bottom: 0.5rem;
+}
+.sensor-values {
+    font-size: 1.1rem;
+    margin-top: 0.5rem;
+}
+.filters {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+.filters label {
+    font-weight: 500;
+}
+.filters input, .filters select {
+    padding: 0.3rem 0.7rem;
+    border-radius: 5px;
+    border: 1px solid #ccc;
+}
+.download-btn {
+    background: #222e50;
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    margin-left: 1rem;
+    transition: background 0.2s;
+}
+.download-btn:hover {
+    background: #f9d923;
+    color: #222e50;
+}
+.param-table {
+    width: 100%;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px #0001;
+    padding: 1rem;
+    margin-top: 1rem;
+}
+.param-table th, .param-table td {
+    padding: 0.7rem 1rem;
+    text-align: left;
+}
+.param-table th {
+    background: #f5f6fa;
+    font-weight: 600;
+}
+footer {
+    background: #222e50;
+    color: #fff;
+    text-align: center;
+    padding: 1rem 0;
+    margin-top: 2rem;
+}
+/* Responsive */
+@media (max-width: 900px) {
+    .section { flex-direction: column; gap: 1.5rem; }
+    main { padding: 0 0.5rem; }
+}
+@media (max-width: 600px) {
+    nav { flex-direction: column; gap: 0.5rem; }
+    .donut-card { min-width: 160px; }
+    .filters { flex-direction: column; gap: 0.5rem; }
+}
+/* Popup login */
+.modal-bg {
+    display: none;
+    position: fixed; z-index: 1000;
+    left: 0; top: 0; width: 100vw; height: 100vh;
+    background: rgba(0,0,0,0.3);
+    align-items: center; justify-content: center;
+}
+.modal-bg.active { display: flex; }
+.modal {
+    background: #fff;
+    border-radius: 12px;
+    padding: 2rem 2.5rem;
+    box-shadow: 0 4px 24px #0003;
+    min-width: 320px;
+    max-width: 90vw;
+    text-align: center;
+    position: relative;
+}
+.modal h2 { margin-bottom: 1.2rem; }
+.modal input {
+    width: 90%;
+    margin-bottom: 1rem;
+    padding: 0.5rem;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+}
+.modal button {
+    background: #222e50;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 0.6rem 1.5rem;
+    font-size: 1rem;
+    cursor: pointer;
+    margin-top: 0.5rem;
+}
+.modal button:hover { background: #f9d923; color: #222e50; }
+.modal .close-btn {
+    position: absolute;
+    right: 1.2rem; top: 1.2rem;
+    background: none; border: none; font-size: 1.5rem; color: #888; cursor: pointer;
+}
+.error-msg { color: #d32f2f; margin-bottom: 0.5rem; }
