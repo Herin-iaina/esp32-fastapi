@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Accueil - Monitoring Capteurs</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- Chart.js pour les graphiques -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Google Fonts et icônes -->
+    <link href="https://fonts.googleapis.com/css?family=Roboto:400,700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+    <style>
+        body {
+            font-family: 'Roboto', sans-serif;
+            margin: 0; background: #f5f6fa;
+            color: #222;
+        }
+        header {
+            background: #222e50;
+            color: #fff;
+            padding: 0;
+            box-shadow: 0 2px 8px #0001;
+        }
+        nav {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            max-width: 1200px;
+            margin: auto;
+            padding: 0.5rem 1rem;
+        }
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            align-items: center;
+        }
+        .nav-links a {
+            color: #fff;
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+        .nav-links a:hover {
+            color: #f9d923;
+        }
+        .user-menu {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+        .user-avatar {
+            width: 38px; height: 38px;
+            border-radius: 50%;
+            background: #f9d923;
+            color: #222e50;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.3rem;
+            cursor: pointer;
+            margin-left: 1rem;
+        }
+        .dropdown {
+            display: none;
+            position: absolute;
+            right: 0; top: 48px;
+            background: #fff;
+            color: #222;
+            min-width: 140px;
+            box-shadow: 0 2px 8px #0002;
+            border-radius: 8px;
+            z-index: 10;
+        }
+        .dropdown a {
+            display: block;
+            padding: 0.8rem 1rem;
+            color: #222;
+            text-decoration: none;
+        }
+        .dropdown a:hover {
+            background: #f5f6fa;
+        }
+        .user-menu.open .dropdown {
+            display: block;
+        }
+        main {
+            max-width: 1200px;
+            margin: 2rem auto 1rem auto;
+            padding: 0 1rem;
+        }
+        .section {
+            margin-bottom: 2.5rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 2rem;
+            justify-content: space-between;
+        }
+        .donut-card {
+            background: #fff;
+            border-radius: 18px;
+            box-shadow: 0 2px 8px #0001;
+            padding: 1.5rem 1rem;
+            flex: 1 1 220px;
+            min-width: 220px;
+            max-width: 320px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .donut-title {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+        .chart-container {
+            width: 120px; height: 120px;
+            margin-bottom: 0.5rem;
+        }
+        .sensor-values {
+            font-size: 1.1rem;
+            margin-top: 0.5rem;
+        }
+        .filters {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+        .filters label {
+            font-weight: 500;
+        }
+        .filters input, .filters select {
+            padding: 0.3rem 0.7rem;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        }
+        .download-btn {
+            background: #222e50;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            padding: 0.5rem 1rem;
+            cursor: pointer;
+            margin-left: 1rem;
+            transition: background 0.2s;
+        }
+        .download-btn:hover {
+            background: #f9d923;
+            color: #222e50;
+        }
+        .param-table {
+            width: 100%;
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px #0001;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+        .param-table th, .param-table td {
+            padding: 0.7rem 1rem;
+            text-align: left;
+        }
+        .param-table th {
+            background: #f5f6fa;
+            font-weight: 600;
+        }
+        footer {
+            background: #222e50;
+            color: #fff;
+            text-align: center;
+            padding: 1rem 0;
+            margin-top: 2rem;
+        }
+        /* Responsive */
+        @media (max-width: 900px) {
+            .section { flex-direction: column; gap: 1.5rem; }
+            main { padding: 0 0.5rem; }
+        }
+        @media (max-width: 600px) {
+            nav { flex-direction: column; gap: 0.5rem; }
+            .donut-card { min-width: 160px; }
+            .filters { flex-direction: column; gap: 0.5rem; }
+        }
+        /* Popup login */
+        .modal-bg {
+            display: none;
+            position: fixed; z-index: 1000;
+            left: 0; top: 0; width: 100vw; height: 100vh;
+            background: rgba(0,0,0,0.3);
+            align-items: center; justify-content: center;
+        }
+        .modal-bg.active { display: flex; }
+        .modal {
+            background: #fff;
+            border-radius: 12px;
+            padding: 2rem 2.5rem;
+            box-shadow: 0 4px 24px #0003;
+            min-width: 320px;
+            max-width: 90vw;
+            text-align: center;
+        }
+        .modal h2 { margin-bottom: 1.2rem; }
+        .modal input {
+            width: 90%;
+            margin-bottom: 1rem;
+            padding: 0.5rem;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+        }
+        .modal button {
+            background: #222e50;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            padding: 0.6rem 1.5rem;
+            font-size: 1rem;
+            cursor: pointer;
+            margin-top: 0.5rem;
+        }
+        .modal button:hover { background: #f9d923; color: #222e50; }
+        .modal .close-btn {
+            position: absolute;
+            right: 1.2rem; top: 1.2rem;
+            background: none; border: none; font-size: 1.5rem; color: #888; cursor: pointer;
+        }
+        .error-msg { color: #d32f2f; margin-bottom: 0.5rem; }
+    </style>
+</head>
+<body>
+    <header>
+        <nav>
+            <div class="nav-links">
+                <a href="#">Accueil</a>
+                <a href="#">Paramètres</a>
+            </div>
+            <div class="user-menu" id="userMenu">
+                <button id="loginBtn" class="user-avatar" title="Se connecter">
+                    <i class="bi bi-person"></i>
+                </button>
+                <div class="dropdown" id="userDropdown">
+                    <a href="#" id="logoutBtn">Déconnexion</a>
+                </div>
+            </div>
+        </nav>
+    </header>
+    <main>
+        <!-- Section 1 : Données capteurs en temps réel -->
+        <section class="section" id="realtimeSection">
+            <!-- Exemple de carte capteur -->
+            <!-- Les cartes seront générées dynamiquement en JS -->
+        </section>
+        <!-- Section 2 : Graphique historique -->
+        <section>
+            <div class="filters">
+                <label>Capteur :
+                    <select id="sensorSelect"></select>
+                </label>
+                <label>Début :
+                    <input type="date" id="startDate">
+                </label>
+                <label>Fin :
+                    <input type="date" id="endDate">
+                </label>
+                <button class="download-btn" id="downloadGraph"><i class="bi bi-download"></i> Télécharger</button>
+            </div>
+            <canvas id="historyChart" height="80"></canvas>
+        </section>
+        <!-- Section 3 : Paramètres -->
+        <section>
+            <h3>Paramètres actuels</h3>
+            <table class="param-table" id="paramTable">
+                <thead>
+                    <tr>
+                        <th>Température cible</th>
+                        <th>Humidité cible</th>
+                        <th>Date de début</th>
+                        <th>Stepper</th>
+                        <th>Nombre stepper</th>
+                        <th>Espèce</th>
+                        <th>Time to close</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Rempli dynamiquement -->
+                </tbody>
+            </table>
+        </section>
+    </main>
+    <footer>
+        &copy; {{ now().year }} Monitoring Capteurs - Smartelia
+    </footer>
+
+    <!-- Popup Login -->
+    <div class="modal-bg" id="loginModal">
+        <div class="modal">
+            <button class="close-btn" id="closeLogin">&times;</button>
+            <h2>Connexion</h2>
+            <div class="error-msg" id="loginError"></div>
+            <input type="text" id="loginUsername" placeholder="Nom d'utilisateur" autocomplete="username">
+            <input type="password" id="loginPassword" placeholder="Mot de passe" autocomplete="current-password">
+            <label style="display:block;margin-bottom:1rem;">
+                <input type="checkbox" id="rememberMe"> Se souvenir de moi
+            </label>
+            <button id="submitLogin">Se connecter</button>
+        </div>
+    </div>
+
+    <script>
+        // --- Gestion du menu utilisateur et du login ---
+        const userMenu = document.getElementById('userMenu');
+        const loginBtn = document.getElementById('loginBtn');
+        const userDropdown = document.getElementById('userDropdown');
+        const loginModal = document.getElementById('loginModal');
+        const closeLogin = document.getElementById('closeLogin');
+        const logoutBtn = document.getElementById('logoutBtn');
+        let isLoggedIn = false;
+
+        loginBtn.onclick = () => { loginModal.classList.add('active'); }
+        closeLogin.onclick = () => { loginModal.classList.remove('active'); }
+        window.onclick = (e) => {
+            if (e.target === loginModal) loginModal.classList.remove('active');
+        }
+        userMenu.onclick = (e) => {
+            if (isLoggedIn) userMenu.classList.toggle('open');
+        }
+        logoutBtn.onclick = () => {
+            isLoggedIn = false;
+            userMenu.classList.remove('open');
+            loginBtn.innerHTML = '<i class="bi bi-person"></i>';
+            userDropdown.style.display = 'none';
+            // TODO: déconnexion côté serveur
+        }
+
+        // --- Login AJAX (exemple, à adapter avec ton endpoint) ---
+        document.getElementById('submitLogin').onclick = async function() {
+            const username = document.getElementById('loginUsername').value;
+            const password = document.getElementById('loginPassword').value;
+            const rememberMe = document.getElementById('rememberMe').checked;
+            const errorDiv = document.getElementById('loginError');
+            errorDiv.textContent = '';
+            try {
+                // Remplace l'URL par ton endpoint réel
+                const resp = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username, password, rememberMe})
+                });
+                if (resp.ok) {
+                    isLoggedIn = true;
+                    loginModal.classList.remove('active');
+                    loginBtn.innerHTML = '<img src="/static/user.png" class="user-avatar" alt="user">';
+                    userDropdown.style.display = 'block';
+                } else {
+                    const data = await resp.json();
+                    errorDiv.textContent = data.detail || "Erreur de connexion";
+                }
+            } catch (err) {
+                errorDiv.textContent = "Erreur réseau";
+            }
+        };
+
+        // --- Données capteurs temps réel (exemple statique, à remplacer par fetch API) ---
+        async function fetchRealtimeSensors() {
+            // Remplace par ton endpoint réel
+            // const resp = await fetch('/api/sensors/realtime');
+            // const sensors = await resp.json();
+            // Exemple statique :
+            const sensors = [
+                {name: "Capteur 1", temperature: 23.5, humidity: 55},
+                {name: "Capteur 2", temperature: 21.2, humidity: 60},
+                {name: "Capteur 3", temperature: 24.1, humidity: 52}
+            ];
+            const section = document.getElementById('realtimeSection');
+            section.innerHTML = '';
+            sensors.forEach((sensor, idx) => {
+                section.innerHTML += `
+                <div class="donut-card">
+                    <div class="donut-title">${sensor.name}</div>
+                    <div class="chart-container">
+                        <canvas id="donut${idx}"></canvas>
+                    </div>
+                    <div class="sensor-values">
+                        <span><i class="bi bi-thermometer-half"></i> ${sensor.temperature}°C</span><br>
+                        <span><i class="bi bi-droplet-half"></i> ${sensor.humidity}%</span>
+                    </div>
+                </div>`;
+                setTimeout(() => drawDonut(`donut${idx}`, sensor.temperature, sensor.humidity), 100);
+            });
+        }
+        function drawDonut(canvasId, temp, hum) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Température', 'Humidité'],
+                    datasets: [{
+                        data: [temp, hum],
+                        backgroundColor: ['#f9d923', '#36a2eb'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    cutout: '70%',
+                    plugins: { legend: { display: false } }
+                }
+            });
+        }
+
+        // --- Graphique historique ---
+        let historyChart;
+        async function fetchHistoryData() {
+            // Remplace par ton endpoint réel et les filtres
+            // const resp = await fetch('/api/sensors/history?...');
+            // const data = await resp.json();
+            // Exemple statique :
+            const labels = ["2024-08-01", "2024-08-02", "2024-08-03", "2024-08-04"];
+            const tempData = [22, 23, 21, 24];
+            const humData = [55, 57, 54, 56];
+            if (historyChart) historyChart.destroy();
+            const ctx = document.getElementById('historyChart').getContext('2d');
+            historyChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [
+                        {
+                            label: 'Température (°C)',
+                            data: tempData,
+                            borderColor: '#f9d923',
+                            backgroundColor: 'rgba(249,217,35,0.1)',
+                            tension: 0.3
+                        },
+                        {
+                            label: 'Humidité (%)',
+                            data: humData,
+                            borderColor: '#36a2eb',
+                            backgroundColor: 'rgba(54,162,235,0.1)',
+                            tension: 0.3
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { position: 'top' }
+                    }
+                }
+            });
+        }
+        document.getElementById('downloadGraph').onclick = function() {
+            const link = document.createElement('a');
+            link.download = 'historique_capteurs.png';
+            link.href = historyChart.toBase64Image();
+            link.click();
+        };
+
+        // --- Paramètres actuels ---
+        async function fetchParams() {
+            // Remplace par ton endpoint réel
+            // const resp = await fetch('/api/parameters/current');
+            // const param = await resp.json();
+            // Exemple statique :
+            const param = {
+                temperature: 23,
+                humidity: 55,
+                start_date: "2024-08-01",
+                stat_stepper: "ON",
+                number_stepper: 2,
+                espece: "Champignon",
+                timetoclose: 28
+            };
+            const tbody = document.getElementById('paramTable').querySelector('tbody');
+            tbody.innerHTML = `
+                <tr>
+                    <td>${param.temperature}°C</td>
+                    <td>${param.humidity}%</td>
+                    <td>${param.start_date}</td>
+                    <td>${param.stat_stepper}</td>
+                    <td>${param.number_stepper}</td>
+                    <td>${param.espece}</td>
+                    <td>${param.timetoclose} jours</td>
+                </tr>
+            `;
+        }
+
+        // --- Initialisation ---
+        window.onload = () => {
+            fetchRealtimeSensors();
+            fetchHistoryData();
+            fetchParams();
+            // TODO: charger la liste des capteurs dans #sensorSelect
+        };
+    </script>
+</body>
+</html>

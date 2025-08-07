@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from fastapi import FastAPI, HTTPException, Depends, status, Request
+from fastapi import FastAPI, HTTPException, Depends, status, Request, Query
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -107,8 +107,6 @@ templates = Jinja2Templates(directory="templates")
 async def read_root(request: Request):
     return templates.TemplateResponse("main.html", {"request": request})
 
-# ... (tous les autres endpoints restent inchangés, sauf pour l'import et la gestion API key) ...
-
 # Exemple pour un endpoint utilisant la session SQLAlchemy :
 @app.get("/health")
 async def health_check():
@@ -132,6 +130,98 @@ async def internal_error_handler(request: Request, exc):
         status_code=500,
         content={"message": "Internal server error"}
     )
+
+@app.get("/api/sensors/history")
+async def get_sensor_history(
+    sensor: Optional[str] = Query(None, description="Nom du capteur"),
+    start: Optional[str] = Query(None, description="Date de début (YYYY-MM-DD)"),
+    end: Optional[str] = Query(None, description="Date de fin (YYYY-MM-DD)"),
+    db: Any = Depends(get_db)
+):
+    """
+    Retourne l'historique des températures et humidités pour un capteur et une période donnée.
+    """
+    from apps.database_configuration import DataTempModel
+    query = db.query(DataTempModel)
+    if sensor:
+        query = query.filter(DataTempModel.sensor == sensor)
+    if start:
+        try:
+            start_dt = datetime.datetime.strptime(start, "%Y-%m-%d")
+            query = query.filter(DataTempModel.date_serveur >= start_dt)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Format de date de début invalide")
+    if end:
+        try:
+            end_dt = datetime.datetime.strptime(end, "%Y-%m-%d") + datetime.timedelta(days=1)
+            query = query.filter(DataTempModel.date_serveur < end_dt)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Format de date de fin invalide")
+    query = query.order_by(DataTempModel.date_serveur.asc())
+    results = query.all()
+    labels = [r.date_serveur.strftime("%Y-%m-%d") for r in results]
+    temp_data = [r.temperature for r in results]
+    hum_data = [r.humidity for r in results]
+    return {
+        "labels": labels,
+        "temperature": temp_data,
+        "humidity": hum_data
+    }
+
+@app.get("/api/sensors/realtime")
+async def get_realtime_sensors(db: Any = Depends(get_db)):
+    """
+    Retourne la dernière valeur de chaque capteur.
+    """
+    from apps.database_configuration import DataTempModel
+    subq = db.query(
+        DataTempModel.sensor,
+        func.max(DataTempModel.date_serveur).label("max_date")
+    ).group_by(DataTempModel.sensor).subquery()
+
+    results = db.query(DataTempModel).join(
+        subq,
+        (DataTempModel.sensor == subq.c.sensor) &
+        (DataTempModel.date_serveur == subq.c.max_date)
+    ).all()
+
+    sensors = [
+        {
+            "name": r.sensor,
+            "temperature": r.temperature,
+            "humidity": r.humidity
+        }
+        for r in results
+    ]
+    return sensors
+
+@app.get("/api/sensors/list")
+async def get_sensor_list(db: Any = Depends(get_db)):
+    """
+    Retourne la liste des capteurs distincts.
+    """
+    from apps.database_configuration import DataTempModel
+    sensors = db.query(DataTempModel.sensor).distinct().all()
+    return [s[0] for s in sensors]
+
+@app.get("/api/parameters/current")
+async def get_current_parameters(db: Any = Depends(get_db)):
+    """
+    Retourne les derniers paramètres enregistrés.
+    """
+    from apps.database_configuration import ParameterDataModel
+    param = db.query(ParameterDataModel).order_by(ParameterDataModel.id.desc()).first()
+    if not param:
+        raise HTTPException(status_code=404, detail="Aucun paramètre trouvé")
+    return {
+        "temperature": param.temperature,
+        "humidity": param.humidity,
+        "start_date": param.start_date.strftime("%Y-%m-%d"),
+        "stat_stepper": "ON" if param.stat_stepper else "OFF",
+        "number_stepper": param.number_stepper,
+        "espece": param.espece,
+        "timetoclose": param.timetoclose
+    }
 
 if __name__ == "__main__":
     import uvicorn
