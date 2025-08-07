@@ -10,8 +10,8 @@ import datetime
 import os
 
 # Import adapté
-from apps import post_temp_humidity
-from apps.database_configuration import get_db, db_manager, DatabaseSettings
+# from apps import post_temp_humidity
+# from apps.database_configuration import get_db, db_manager, DatabaseSettings
 
 # Chargement dynamique des clés API depuis l'environnement
 API_KEYS = os.getenv("API_KEYS", "votre_cle_api_1,votre_cle_api_2,Votre_Cle_API").split(",")
@@ -133,94 +133,42 @@ async def internal_error_handler(request: Request, exc):
 
 @app.get("/api/sensors/history")
 async def get_sensor_history(
-    sensor: Optional[str] = Query(None, description="Nom du capteur"),
-    start: Optional[str] = Query(None, description="Date de début (YYYY-MM-DD)"),
-    end: Optional[str] = Query(None, description="Date de fin (YYYY-MM-DD)"),
-    db: Any = Depends(get_db)
+    sensor: Optional[str] = Query(None),
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None)
 ):
-    """
-    Retourne l'historique des températures et humidités pour un capteur et une période donnée.
-    """
-    from apps.database_configuration import DataTempModel
-    query = db.query(DataTempModel)
-    if sensor:
-        query = query.filter(DataTempModel.sensor == sensor)
-    if start:
-        try:
-            start_dt = datetime.datetime.strptime(start, "%Y-%m-%d")
-            query = query.filter(DataTempModel.date_serveur >= start_dt)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Format de date de début invalide")
-    if end:
-        try:
-            end_dt = datetime.datetime.strptime(end, "%Y-%m-%d") + datetime.timedelta(days=1)
-            query = query.filter(DataTempModel.date_serveur < end_dt)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Format de date de fin invalide")
-    query = query.order_by(DataTempModel.date_serveur.asc())
-    results = query.all()
-    labels = [r.date_serveur.strftime("%Y-%m-%d") for r in results]
-    temp_data = [r.temperature for r in results]
-    hum_data = [r.humidity for r in results]
+    # MOCK DATA
     return {
-        "labels": labels,
-        "temperature": temp_data,
-        "humidity": hum_data
+        "labels": ["2024-08-01", "2024-08-02", "2024-08-03", "2024-08-04"],
+        "temperature": [22, 23, 21, 24],
+        "humidity": [55, 57, 54, 56]
     }
 
 @app.get("/api/sensors/realtime")
-async def get_realtime_sensors(db: Any = Depends(get_db)):
-    """
-    Retourne la dernière valeur de chaque capteur.
-    """
-    from apps.database_configuration import DataTempModel
-    subq = db.query(
-        DataTempModel.sensor,
-        func.max(DataTempModel.date_serveur).label("max_date")
-    ).group_by(DataTempModel.sensor).subquery()
-
-    results = db.query(DataTempModel).join(
-        subq,
-        (DataTempModel.sensor == subq.c.sensor) &
-        (DataTempModel.date_serveur == subq.c.max_date)
-    ).all()
-
-    sensors = [
-        {
-            "name": r.sensor,
-            "temperature": r.temperature,
-            "humidity": r.humidity
-        }
-        for r in results
+async def get_realtime_sensors():
+    # MOCK DATA
+    return [
+        {"name": "Capteur 1", "temperature": 23.5, "humidity": 55},
+        {"name": "Capteur 2", "temperature": 21.2, "humidity": 60},
+        {"name": "Capteur 3", "temperature": 24.1, "humidity": 52}
     ]
-    return sensors
 
 @app.get("/api/sensors/list")
-async def get_sensor_list(db: Any = Depends(get_db)):
-    """
-    Retourne la liste des capteurs distincts.
-    """
-    from apps.database_configuration import DataTempModel
-    sensors = db.query(DataTempModel.sensor).distinct().all()
-    return [s[0] for s in sensors]
+async def get_sensor_list():
+    # MOCK DATA
+    return ["Capteur 1", "Capteur 2", "Capteur 3"]
 
 @app.get("/api/parameters/current")
-async def get_current_parameters(db: Any = Depends(get_db)):
-    """
-    Retourne les derniers paramètres enregistrés.
-    """
-    from apps.database_configuration import ParameterDataModel
-    param = db.query(ParameterDataModel).order_by(ParameterDataModel.id.desc()).first()
-    if not param:
-        raise HTTPException(status_code=404, detail="Aucun paramètre trouvé")
+async def get_current_parameters():
+    # MOCK DATA
     return {
-        "temperature": param.temperature,
-        "humidity": param.humidity,
-        "start_date": param.start_date.strftime("%Y-%m-%d"),
-        "stat_stepper": "ON" if param.stat_stepper else "OFF",
-        "number_stepper": param.number_stepper,
-        "espece": param.espece,
-        "timetoclose": param.timetoclose
+        "temperature": 23,
+        "humidity": 55,
+        "start_date": "2024-08-01",
+        "stat_stepper": "ON",
+        "number_stepper": 2,
+        "espece": "Champignon",
+        "timetoclose": 28
     }
 
 if __name__ == "__main__":

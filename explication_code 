@@ -40,11 +40,13 @@ Pour migrer :
 
 Installer les dépendances :
 
-bashpip install -r requirements.txt
+bash
+pip install -r requirements.txt
 
 Lancer l'application :
 
-bashuvicorn main:app --host 0.0.0.0 --port 5005 --reload
+bash
+uvicorn main:app --host 0.0.0.0 --port 5005 --reload
 
 Accéder à la documentation :
 
