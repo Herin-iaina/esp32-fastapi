@@ -1,0 +1,60 @@
+<div id="parameterModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Configuration des Paramètres</h2>
+            <span class="close">&times;</span>
+        </div>
+        <div class="modal-body">
+            <form id="parameterForm">
+                <div class="form-group">
+                    <label for="temperature">Température (23°C - 50°C)</label>
+                    <input type="number" id="temperature" min="23" max="50" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="humidity">Humidité (40% - 100%)</label>
+                    <input type="number" id="humidity" min="40" max="100" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="startDate">Date de début</label>
+                    <input type="datetime-local" id="startDate" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="statStepper">État du stepper</label>
+                    <select id="statStepper" required>
+                        <option value="true">ON</option>
+                        <option value="false">OFF</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="numberStepper">Nombre de steppers (3-10)</label>
+                    <input type="number" id="numberStepper" min="3" max="10" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="espece">Type d'espèce</label>
+                    <select id="espece" required>
+                        <option value="option1">Poule</option>
+                        <option value="option2">Canne</option>
+                        <option value="option3">Oie</option>
+                        <option value="option4">Caille</option>
+                        <option value="option5">Autre</option>
+                    </select>
+                </div>
+
+                <div class="form-group" id="timecloseGroup" style="display: none;">
+                    <label for="timetoclose">Temps de fermeture (18-30 jours)</label>
+                    <input type="number" id="timetoclose" min="18" max="30">
+                </div>
+
+                <div class="form-actions">
+                    <button type="submit" class="btn-primary">Enregistrer</button>
+                    <button type="button" class="btn-secondary" id="cancelParam">Annuler</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
