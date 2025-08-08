@@ -7,11 +7,26 @@ from contextlib import contextmanager
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Float, Text, TIMESTAMP
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Float, Text, TIMESTAMP, func
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import StaticPool
 from pydantic import BaseSettings
+from dotenv import load_dotenv
+
+# Chargement des variables d'environnement
+load_dotenv(dotenv_path=os.getenv("ENV_PATH", ".env"))
+
+# Configuration directe depuis les variables d'environnement
+DB_CONFIG = {
+    "host": os.getenv("DB_HOST", "127.0.0.1"),
+    "port": int(os.getenv("DB_PORT", "5432")),
+    "user": os.getenv("DB_USER", "ted"),
+    "password": os.getenv("DB_PASSWORD", "ombre1235"),
+    "database": os.getenv("DB_NAME", "sensor"),
+    "pool_size": int(os.getenv("DB_POOL_SIZE", "10")),
+    "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "20"))
+}
 
 # Configuration via variables d'environnement
 class DatabaseSettings(BaseSettings):
@@ -106,8 +121,8 @@ class DatabaseSettings(BaseSettings):
     
         def _get_database_url(self) -> str:
             return (
-                f"postgresql://{db_settings.db_user}:{db_settings.db_password}"
-                f"@{db_settings.db_host}:{db_settings.db_port}/{db_settings.db_name}"
+                f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
+                f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
             )
     
         def _initialize_database(self):

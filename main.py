@@ -14,8 +14,8 @@ import json
 from pathlib import Path
 
 # Import adapté
-# from apps import post_temp_humidity
-# from apps.database_configuration import get_db, db_manager, DatabaseSettings
+from apps import post_temp_humidity
+from apps.database_configuration import get_db, db_manager, DatabaseSettings
 
 # Chargement dynamique des clés API depuis l'environnement
 API_KEYS = os.getenv("API_KEYS", "votre_cle_api_1,votre_cle_api_2,Votre_Cle_API").split(",")
