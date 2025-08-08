@@ -35,13 +35,21 @@ class ValuesRequest(BaseModel):
     # Dynamic sensor data will be handled separately
 
 class ParameterRequest(BaseModel):
-    temperature: float = Field(..., gt=0, description="Target temperature")
-    humidity: float = Field(..., gt=0, description="Target humidity")
-    start_date: str = Field(..., description="Start date")
-    stat_stepper: str = Field(..., description="Stepper status")
-    number_stepper: int = Field(..., gt=0, description="Number of steppers")
-    espece: str = Field(..., description="Species type")
-    timetoclose: Optional[int] = Field(None, description="Time to close in days")
+    temperature: float = Field(..., ge=23, le=50, description="Température (entre 23°C et 50°C)")
+    humidity: float = Field(..., ge=40, le=100, description="Humidité (entre 40% et 100%)")
+    start_date: str = Field(..., description="Date de début")
+    stat_stepper: bool = Field(..., description="État du stepper")
+    number_stepper: int = Field(..., ge=3, le=10, description="Nombre de steppers (entre 3 et 10)")
+    espece: str = Field(..., description="Type d'espèce")
+    timetoclose: Optional[int] = Field(None, ge=18, le=30, description="Temps de fermeture (entre 18 et 30 jours)")
+
+    # Validation personnalisée pour espece
+    @validator('espece')
+    def validate_espece(cls, v):
+        valid_especes = ["option1", "option2", "option3", "option4", "option5"]
+        if v not in valid_especes:
+            raise ValueError(f"L'espèce doit être l'une des suivantes : {', '.join(valid_especes)}")
+        return v
 
 class LoginRequest(BaseModel):
     username: str = Field(..., min_length=1)
@@ -151,9 +159,21 @@ async def read_root(request: Request):
 
 @app.post("/values", response_model=APIResponse)
 async def post_values(request: Request, api_key: str = Depends(get_api_key)):
-    """Post sensor values"""
     try:
         data = await request.json()
+        
+        # Ajouter la validation
+        if not post_temp_humidity.validate_temperature(data.get('average_temperature')):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid temperature value"
+            )
+            
+        if not post_temp_humidity.validate_humidity(data.get('average_humidity')):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid humidity value"
+            )
         
         # Extract base values
         average_temperature = float(data.get('average_temperature', 0))
@@ -212,15 +232,24 @@ async def post_values(request: Request, api_key: str = Depends(get_api_key)):
 async def get_data(api_key: str = Depends(get_api_key)):
     """Get current device status"""
     try:
+        # INCORRECT : get_last_data() retourne un dictionnaire avec average_temperature et average_humidity
         fan_humidity_status = post_temp_humidity.get_last_data()
-        fan_status = fan_humidity_status[0]
-        humidifier_status = fan_humidity_status[1]
+        fan_status = fan_humidity_status[0]  # Cette ligne causera une erreur
+        humidifier_status = fan_humidity_status[1]  # Cette ligne causera une erreur
         motor_status = post_temp_humidity.post_stepper_status()
 
+        # CORRECTION :
+        data = post_temp_humidity.get_last_data()
+        if data is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No data found"
+            )
+        
         return {
-            'FAN': fan_status,
-            'Humidity': humidifier_status,
-            'Motor': motor_status
+            'temperature': data['average_temperature'],
+            'humidity': data['average_humidity'],
+            'Motor': post_temp_humidity.post_stepper_status()
         }
     except Exception as e:
         raise HTTPException(
@@ -262,7 +291,7 @@ async def get_all_data(
     """Get all data with optional date filtering"""
     try:
         if not date_int or not date_end:
-            results = post_temp_humidity.get_all_data(False, False)
+            results = post_temp_humidity.get_all_data(None, None)  # CORRECTION : Passer None au lieu de False
             return results
         
         # Add default time if not specified
@@ -312,12 +341,10 @@ async def get_running_status():
     return {"message": "Endpoint requires POST method with date parameter"}
 
 @app.post("/parameter", response_model=APIResponse)
-async def create_parameter(
-    parameter_request: ParameterRequest,
-    api_key: str = Depends(get_api_key)
-):
-    """Create system parameters"""
+async def create_parameter(parameter_request: ParameterRequest):
+    """Créer ou mettre à jour les paramètres du système"""
     try:
+        # Mapping des espèces avec validation
         espece_mapping = {
             "option1": "poule",
             "option2": "canne", 
@@ -326,53 +353,78 @@ async def create_parameter(
             "option5": "other"
         }
         
+        # Validation du type d'espèce
+        espece_name = espece_mapping.get(parameter_request.espece)
+        if not espece_name:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Type d'espèce invalide. Valeurs acceptées : {', '.join(espece_mapping.keys())}"
+            )
+
+        # Validation et récupération du temps de fermeture
         remain_date = {
             "poule": 21,
             "canne": 28,
             "oie": 30,
             "caille": 18,
-            "other": parameter_request.timetoclose or 28
+            "other": None  # Sera géré séparément
         }
-        
-        if parameter_request.espece not in espece_mapping:
+
+        dayclose = remain_date.get(espece_name)
+        if espece_name == "other":
+            if parameter_request.timetoclose is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Le temps de fermeture est requis pour le type 'other'"
+                )
+            dayclose = parameter_request.timetoclose
+
+        # Validation de la date
+        try:
+            formatted_date = DateFormatter.format_date(parameter_request.start_date)
+        except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Unknown species"
+                detail="Format de date invalide"
             )
-        
-        espece_name = espece_mapping[parameter_request.espece]
-        dayclose = remain_date[espece_name]
-        
-        if isinstance(dayclose, int) and dayclose < 0:
-            dayclose = 28
-        
-        formatted_date = DateFormatter.format_date(parameter_request.start_date)
-        
+
+        # Préparation des données avec validation intégrée
         data_to_insert = {
-            'temperature': max(parameter_request.temperature, 23),
-            'humidity': max(parameter_request.humidity, 40),
+            'temperature': parameter_request.temperature,  # Déjà validé par Pydantic
+            'humidity': parameter_request.humidity,  # Déjà validé par Pydantic
             'start_date': formatted_date,
             'stat_stepper': parameter_request.stat_stepper,
-            'number_stepper': max(parameter_request.number_stepper, 3),
+            'number_stepper': parameter_request.number_stepper,  # Déjà validé par Pydantic
             'espece': espece_name,
             'timetoclose': dayclose
         }
         
+        # Appel à la fonction de création/mise à jour
         result = post_temp_humidity.create_parameter(data_to_insert)
         
-        if result:
-            # La gestion de la fermeture est maintenant automatique avec le pool
-            return APIResponse(message="Parameters created successfully")
-        else:
+        if not result:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create parameters"
+                detail="Échec de la création des paramètres"
             )
+
+        return APIResponse(
+            message="Paramètres créés avec succès",
+            data=data_to_insert
+        )
             
-    except ValueError as e:
+    except ValidationError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid date format"
+            detail=str(e)
+        )
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Erreur inattendue : {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erreur serveur interne"
         )
 
 @app.get("/parameter")
@@ -427,6 +479,18 @@ async def parametre_page(request: Request):
 async def logout():
     """User logout"""
     return {"message": "Logged out successfully"}
+
+@app.get("/datatable")
+async def get_data_table(api_key: str = Depends(get_api_key)):
+    """Get data table"""
+    try:
+        data = post_temp_humidity.data_table()
+        return data
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve data table"
+        )
 
 # Health check endpoint
 @app.get("/health")

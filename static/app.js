@@ -1,3 +1,65 @@
+// Configuration
+const API_CONFIG = {
+    baseUrl: '', // URL de base de l'API
+    headers: {
+        'Content-Type': 'application/json',
+        'X-API-KEY': 'votre_cle_api_1' // Remplacer par la vraie clé API
+    }
+};
+
+// Fonction utilitaire pour les appels API
+async function apiCall(endpoint, options = {}) {
+    const response = await fetch(`${API_CONFIG.baseUrl}${endpoint}`, {
+        ...options,
+        headers: {
+            ...API_CONFIG.headers,
+            ...options.headers
+        }
+    });
+    
+    if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+    }
+    
+    return response.json();
+}
+
+// Fonction de récupération des données en temps réel
+async function fetchRealtimeData() {
+    try {
+        const data = await apiCall('/WeatherData');
+        updateSensorCards(data);
+    } catch (error) {
+        console.error('Erreur lors de la récupération des données:', error);
+        showError('Erreur de connexion au serveur');
+    }
+}
+
+// Fonction de mise à jour du graphique historique
+async function updateHistoryChart() {
+    const startDate = document.getElementById('startDate').value;
+    const endDate = document.getElementById('endDate').value;
+    
+    try {
+        const data = await apiCall(`/alldata?date_int=${startDate}&date_end=${endDate}`);
+        renderHistoryChart(data);
+    } catch (error) {
+        console.error('Erreur lors de la récupération de l\'historique:', error);
+        showError('Erreur de chargement de l\'historique');
+    }
+}
+
+// Fonction de récupération des paramètres
+async function fetchParameters() {
+    try {
+        const params = await apiCall('/parameter');
+        updateParametersTable(params);
+    } catch (error) {
+        console.error('Erreur lors de la récupération des paramètres:', error);
+        showError('Erreur de chargement des paramètres');
+    }
+}
+
 // --- Gestion du menu utilisateur et du login ---
 const userMenu = document.getElementById('userMenu');
 const loginBtn = document.getElementById('loginBtn');
@@ -181,4 +243,13 @@ window.onload = () => {
     fetchHistoryData();
     fetchParams();
     // TODO: charger la liste des capteurs dans #sensorSelect
+    fetchRealtimeData();
+    fetchParameters();
+    
+    // Configurer les rafraîchissements automatiques
+    setInterval(fetchRealtimeData, 30000); // 30 secondes
+    
+    // Configurer les écouteurs d'événements
+    document.getElementById('refreshData').addEventListener('click', updateHistoryChart);
+    document.getElementById('downloadGraph').addEventListener('click', downloadChart);
 };

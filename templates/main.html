@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>Accueil - Monitoring Capteurs</title>
+    <title>Monitoring Capteurs</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link href="/static/style.css" rel="stylesheet">
     <link rel="stylesheet" href="/static/bootstrap-icons">
@@ -11,8 +11,8 @@
     <header>
         <nav>
             <div class="nav-links">
-                <a href="#">Accueil</a>
-                <a href="#">Paramètres</a>
+                <a href="/" class="active">Accueil</a>
+                <a href="/parametre">Paramètres</a>
             </div>
             <div class="user-menu" id="userMenu">
                 <button id="loginBtn" class="user-avatar" title="Se connecter">
@@ -24,65 +24,70 @@
             </div>
         </nav>
     </header>
+
     <main>
-        <!-- Section 1 : Données capteurs en temps réel -->
+        <!-- Section 1: Données en temps réel -->
         <section class="section" id="realtimeSection">
-            <!-- Exemple de carte capteur -->
-            <!-- Les cartes seront générées dynamiquement en JS -->
+            <h2>Données en temps réel</h2>
+            <div id="sensorCards" class="sensor-grid"></div>
         </section>
-        <!-- Section 2 : Graphique historique -->
-        <section>
+
+        <!-- Section 2: Graphique historique -->
+        <section class="section">
+            <h2>Historique</h2>
             <div class="filters">
-                <label>Capteur :
-                    <select id="sensorSelect"></select>
-                </label>
-                <label>Début :
+                <label>
+                    Période :
                     <input type="date" id="startDate">
-                </label>
-                <label>Fin :
                     <input type="date" id="endDate">
                 </label>
-                <button class="download-btn" id="downloadGraph"><i class="bi bi-download"></i> Télécharger</button>
+                <button id="refreshData" class="primary-btn">Actualiser</button>
+                <button class="download-btn" id="downloadGraph">
+                    <i class="bi bi-download"></i> Télécharger
+                </button>
             </div>
-            <canvas id="historyChart" height="80"></canvas>
+            <div class="chart-container">
+                <canvas id="historyChart"></canvas>
+            </div>
         </section>
-        <!-- Section 3 : Paramètres -->
-        <section>
-            <h3>Paramètres actuels</h3>
-            <table class="param-table" id="paramTable">
-                <thead>
-                    <tr>
-                        <th>Température cible</th>
-                        <th>Humidité cible</th>
-                        <th>Date de début</th>
-                        <th>Stepper</th>
-                        <th>Nombre stepper</th>
-                        <th>Espèce</th>
-                        <th>Time to close</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <!-- Rempli dynamiquement -->
-                </tbody>
-            </table>
+
+        <!-- Section 3: Paramètres actuels -->
+        <section class="section">
+            <h2>Paramètres actuels</h2>
+            <div class="parameters-container">
+                <table id="paramTable" class="param-table">
+                    <thead>
+                        <tr>
+                            <th>Température</th>
+                            <th>Humidité</th>
+                            <th>Date début</th>
+                            <th>Stepper</th>
+                            <th>Nombre steppers</th>
+                            <th>Espèce</th>
+                            <th>Temps restant</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
         </section>
     </main>
-    <footer>
-       
-    </footer>
 
-    <!-- Popup Login -->
-    <div class="modal-bg" id="loginModal">
+    <!-- Modal de connexion -->
+    <div id="loginModal" class="modal-bg">
         <div class="modal">
             <button class="close-btn" id="closeLogin">&times;</button>
             <h2>Connexion</h2>
-            <div class="error-msg" id="loginError"></div>
-            <input type="text" id="loginUsername" placeholder="Nom d'utilisateur" autocomplete="username">
-            <input type="password" id="loginPassword" placeholder="Mot de passe" autocomplete="current-password">
-            <label style="display:block;margin-bottom:1rem;">
-                <input type="checkbox" id="rememberMe"> Se souvenir de moi
-            </label>
-            <button id="submitLogin">Se connecter</button>
+            <div id="loginError" class="error-msg"></div>
+            <form id="loginForm">
+                <input type="text" id="loginUsername" placeholder="Nom d'utilisateur" required>
+                <input type="password" id="loginPassword" placeholder="Mot de passe" required>
+                <label>
+                    <input type="checkbox" id="rememberMe">
+                    Se souvenir de moi
+                </label>
+                <button type="submit" class="primary-btn">Se connecter</button>
+            </form>
         </div>
     </div>
 
