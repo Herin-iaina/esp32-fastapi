@@ -115,31 +115,36 @@ document.getElementById('submitLogin').onclick = async function() {
 
 // --- Données capteurs temps réel ---
 async function fetchRealtimeSensors() {
-    // Remplace par ton endpoint réel
-    // const resp = await fetch('/api/sensors/realtime');
-    // const sensors = await resp.json();
-    // Exemple statique :
-    const sensors = [
-        {name: "Capteur 1", temperature: 23.5, humidity: 55},
-        {name: "Capteur 2", temperature: 21.2, humidity: 60},
-        {name: "Capteur 3", temperature: 24.1, humidity: 52}
-    ];
-    const section = document.getElementById('realtimeSection');
-    section.innerHTML = '';
-    sensors.forEach((sensor, idx) => {
-        section.innerHTML += `
-        <div class="donut-card">
-            <div class="donut-title">${sensor.name}</div>
-            <div class="chart-container">
-                <canvas id="donut${idx}"></canvas>
-            </div>
-            <div class="sensor-values">
-                <span><i class="bi bi-thermometer-half"></i> ${sensor.temperature}°C</span><br>
-                <span><i class="bi bi-droplet-half"></i> ${sensor.humidity}%</span>
-            </div>
-        </div>`;
-        setTimeout(() => drawDonut(`donut${idx}`, sensor.temperature, sensor.humidity), 100);
-    });
+    try {
+        const response = await apiCall('/WeatherData');
+        if (!response) {
+            throw new Error('Aucune donnée disponible');
+        }
+
+        const section = document.getElementById('realtimeSection');
+        section.innerHTML = '';
+        
+        // Mise à jour des données en temps réel
+        if (response.sensor_data) {
+            response.sensor_data.forEach((sensor, idx) => {
+                section.innerHTML += `
+                    <div class="donut-card">
+                        <div class="donut-title">Capteur ${sensor.sensor}</div>
+                        <div class="chart-container">
+                            <canvas id="donut${idx}"></canvas>
+                        </div>
+                        <div class="sensor-values">
+                            <span><i class="bi bi-thermometer-half"></i> ${sensor.temperature}°C</span><br>
+                            <span><i class="bi bi-droplet-half"></i> ${sensor.humidity}%</span>
+                        </div>
+                    </div>`;
+                setTimeout(() => drawDonut(`donut${idx}`, sensor.temperature, sensor.humidity), 100);
+            });
+        }
+    } catch (error) {
+        console.error('Erreur lors de la récupération des données:', error);
+        showError('Erreur de connexion au serveur');
+    }
 }
 function drawDonut(canvasId, temp, hum) {
     const ctx = document.getElementById(canvasId).getContext('2d');
@@ -163,43 +168,51 @@ function drawDonut(canvasId, temp, hum) {
 // --- Graphique historique ---
 let historyChart;
 async function fetchHistoryData() {
-    // Remplace par ton endpoint réel et les filtres
-    // const resp = await fetch('/api/sensors/history?...');
-    // const data = await resp.json();
-    // Exemple statique :
-    const labels = ["2024-08-01", "2024-08-02", "2024-08-03", "2024-08-04"];
-    const tempData = [22, 23, 21, 24];
-    const humData = [55, 57, 54, 56];
-    if (historyChart) historyChart.destroy();
-    const ctx = document.getElementById('historyChart').getContext('2d');
-    historyChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels,
-            datasets: [
-                {
-                    label: 'Température (°C)',
-                    data: tempData,
-                    borderColor: '#f9d923',
-                    backgroundColor: 'rgba(249,217,35,0.1)',
-                    tension: 0.3
-                },
-                {
-                    label: 'Humidité (%)',
-                    data: humData,
-                    borderColor: '#36a2eb',
-                    backgroundColor: 'rgba(54,162,235,0.1)',
-                    tension: 0.3
+    try {
+        const startDate = document.getElementById('startDate').value;
+        const endDate = document.getElementById('endDate').value;
+        
+        const response = await apiCall(`/alldata?date_int=${startDate}&date_end=${endDate}`);
+        
+        const labels = response.map(item => item.date);
+        const tempData = response.map(item => item.temperature_moyenne);
+        const humData = response.map(item => item.humidite_moyenne);
+
+        if (historyChart) historyChart.destroy();
+        
+        const ctx = document.getElementById('historyChart').getContext('2d');
+        historyChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    {
+                        label: 'Température (°C)',
+                        data: tempData,
+                        borderColor: '#f9d923',
+                        backgroundColor: 'rgba(249,217,35,0.1)',
+                        tension: 0.3
+                    },
+                    {
+                        label: 'Humidité (%)',
+                        data: humData,
+                        borderColor: '#36a2eb',
+                        backgroundColor: 'rgba(54,162,235,0.1)',
+                        tension: 0.3
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { position: 'top' }
                 }
-            ]
-        },
-        options: {
-            responsive: true,
-            plugins: {
-                legend: { position: 'top' }
             }
-        }
-    });
+        });
+    } catch (error) {
+        console.error('Erreur lors de la récupération des données historiques:', error);
+        showError('Erreur de chargement des données historiques');
+    }
 }
 document.getElementById('downloadGraph').onclick = function() {
     const link = document.createElement('a');
@@ -210,46 +223,45 @@ document.getElementById('downloadGraph').onclick = function() {
 
 // --- Paramètres actuels ---
 async function fetchParams() {
-    // Remplace par ton endpoint réel
-    // const resp = await fetch('/api/parameters/current');
-    // const param = await resp.json();
-    // Exemple statique :
-    const param = {
-        temperature: 23,
-        humidity: 55,
-        start_date: "2024-08-01",
-        stat_stepper: "ON",
-        number_stepper: 2,
-        espece: "Champignon",
-        timetoclose: 28
-    };
-    const tbody = document.getElementById('paramTable').querySelector('tbody');
-    tbody.innerHTML = `
-        <tr>
-            <td>${param.temperature}°C</td>
-            <td>${param.humidity}%</td>
-            <td>${param.start_date}</td>
-            <td>${param.stat_stepper}</td>
-            <td>${param.number_stepper}</td>
-            <td>${param.espece}</td>
-            <td>${param.timetoclose} jours</td>
-        </tr>
-    `;
+    try {
+        const param = await apiCall('/parameter');
+        
+        const tbody = document.getElementById('paramTable').querySelector('tbody');
+        tbody.innerHTML = `
+            <tr>
+                <td>${param.temperature}°C</td>
+                <td>${param.humidity}%</td>
+                <td>${param.start_date}</td>
+                <td>${param.stat_stepper ? 'ON' : 'OFF'}</td>
+                <td>${param.number_stepper}</td>
+                <td>${param.espece}</td>
+                <td>${param.timetoclose} jours</td>
+            </tr>
+        `;
+    } catch (error) {
+        console.error('Erreur lors de la récupération des paramètres:', error);
+        showError('Erreur de chargement des paramètres');
+    }
 }
 
 // --- Initialisation ---
 window.onload = () => {
+    // Charger toutes les données initiales
     fetchRealtimeSensors();
     fetchHistoryData();
     fetchParams();
-    // TODO: charger la liste des capteurs dans #sensorSelect
-    fetchRealtimeData();
-    fetchParameters();
     
     // Configurer les rafraîchissements automatiques
-    setInterval(fetchRealtimeData, 30000); // 30 secondes
+    setInterval(fetchRealtimeSensors, 30000); // Mise à jour toutes les 30 secondes
     
     // Configurer les écouteurs d'événements
-    document.getElementById('refreshData').addEventListener('click', updateHistoryChart);
-    document.getElementById('downloadGraph').addEventListener('click', downloadChart);
+    document.getElementById('refreshData')?.addEventListener('click', fetchHistoryData);
+    document.getElementById('downloadGraph')?.addEventListener('click', () => {
+        if (historyChart) {
+            const link = document.createElement('a');
+            link.download = `historique_capteurs_${new Date().toISOString().split('T')[0]}.png`;
+            link.href = historyChart.toBase64Image();
+            link.click();
+        }
+    });
 };
