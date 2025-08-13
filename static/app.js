@@ -29,6 +29,7 @@ async function fetchRealtimeData() {
     try {
         const data = await apiCall('/WeatherData');
         updateSensorCards(data);
+        console.log('Données en temps réel récupérées:', data);
     } catch (error) {
         console.error('Erreur lors de la récupération des données:', error);
         showError('Erreur de connexion au serveur');
@@ -47,18 +48,7 @@ async function updateHistoryChart() {
         console.error('Erreur lors de la récupération de l\'historique:', error);
         showError('Erreur de chargement de l\'historique');
     }
-}
-
-// Fonction de récupération des paramètres
-async function fetchParameters() {
-    try {
-        const params = await apiCall('/parameter');
-        updateParametersTable(params);
-    } catch (error) {
-        console.error('Erreur lors de la récupération des paramètres:', error);
-        showError('Erreur de chargement des paramètres');
-    }
-}
+}Ò
 
 // --- Gestion du menu utilisateur et du login ---
 const userMenu = document.getElementById('userMenu');
@@ -86,14 +76,14 @@ logoutBtn.onclick = () => {
 }
 
 // --- Login AJAX (exemple, à adapter avec ton endpoint) ---
-document.getElementById('submitLogin').onclick = async function() {
+document.getElementById('submitLogin').onclick = async function(event) {
+    event.preventDefault();
     const username = document.getElementById('loginUsername').value;
     const password = document.getElementById('loginPassword').value;
     const rememberMe = document.getElementById('rememberMe').checked;
     const errorDiv = document.getElementById('loginError');
     errorDiv.textContent = '';
     try {
-        // Remplace l'URL par ton endpoint réel
         const resp = await fetch('/api/login', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -221,35 +211,11 @@ document.getElementById('downloadGraph').onclick = function() {
     link.click();
 };
 
-// --- Paramètres actuels ---
-async function fetchParams() {
-    try {
-        const param = await apiCall('/parameter');
-        
-        const tbody = document.getElementById('paramTable').querySelector('tbody');
-        tbody.innerHTML = `
-            <tr>
-                <td>${param.temperature}°C</td>
-                <td>${param.humidity}%</td>
-                <td>${param.start_date}</td>
-                <td>${param.stat_stepper ? 'ON' : 'OFF'}</td>
-                <td>${param.number_stepper}</td>
-                <td>${param.espece}</td>
-                <td>${param.timetoclose} jours</td>
-            </tr>
-        `;
-    } catch (error) {
-        console.error('Erreur lors de la récupération des paramètres:', error);
-        showError('Erreur de chargement des paramètres');
-    }
-}
-
 // --- Initialisation ---
 window.onload = () => {
     // Charger toutes les données initiales
     fetchRealtimeSensors();
     fetchHistoryData();
-    fetchParams();
     
     // Configurer les rafraîchissements automatiques
     setInterval(fetchRealtimeSensors, 30000); // Mise à jour toutes les 30 secondes
@@ -266,17 +232,3 @@ window.onload = () => {
     });
 };
 
-
-// Ajoute ce code dans app.js ou un JS global
-document.getElementById('openParameterModal').addEventListener('click', async () => {
-    if (!document.getElementById('parameterModal')) {
-        const resp = await fetch('/parameter', { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
-        const html = await resp.text();
-        document.body.insertAdjacentHTML('beforeend', html);
-        // Charger le JS de la modale si besoin (si pas déjà chargé)
-        if (typeof window.parameterModalInit === 'function') {
-            window.parameterModalInit();
-        }
-    }
-    document.getElementById('parameterModal').style.display = 'block';
-});
