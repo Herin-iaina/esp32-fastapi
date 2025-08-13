@@ -13,6 +13,7 @@ from datetime import timedelta
 import os
 import json
 from pathlib import Path
+import logging
 
 # Import adapté
 from apps import post_temp_humidity
@@ -21,6 +22,8 @@ from apps.database_configuration import get_db, db_manager, DatabaseSettings
 # Chargement dynamique des clés API depuis l'environnement
 API_KEYS = os.getenv("API_KEYS", "votre_cle_api_1,votre_cle_api_2,Votre_Cle_API").split(",")
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Pydantic models for request/response validation
 class SensorData(BaseModel):
@@ -83,18 +86,17 @@ api_key_manager = APIKeyManager()
 def get_api_key(request: Request) -> str:
     """Extract API key from headers"""
     api_key = request.headers.get('X-API-KEY')
+    logger.info(f"Received API key: {api_key}")  # Remplace print par logger.info
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="API key missing"
         )
-    
     if not api_key_manager.validate_api_key(api_key):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key"
         )
-    
     return api_key
 
 # Utility functions
@@ -383,6 +385,7 @@ async def create_parameter(parameter_request: ParameterRequest):
         # Validation de la date
         try:
             formatted_date = DateFormatter.format_date(parameter_request.start_date)
+            logger.info(f"Formatted date +++++++++++++: {formatted_date}")  # Remplace print par logger.info
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -401,6 +404,7 @@ async def create_parameter(parameter_request: ParameterRequest):
         }
         
         # Appel à la fonction de création/mise à jour
+        logger.info(f"Received start_date ------: {parameter_request.start_date}")  # Remplace print par logger.info
         result = post_temp_humidity.create_parameter(data_to_insert)
         
         if not result:
@@ -428,8 +432,13 @@ async def create_parameter(parameter_request: ParameterRequest):
             detail="Erreur serveur interne"
         )
 
-@app.get("/parameter")
-async def get_parameter(api_key: str = Depends(get_api_key)):
+@app.get("/parameter", response_class=HTMLResponse)
+async def get_parameter_page(request: Request):
+    """Parameters page"""
+    return templates.TemplateResponse("parameter.html", {"request": request})
+
+@app.get("/api/parameter")
+async def get_parameter_api(request: Request, api_key: str = Depends(get_api_key)):
     """Get system parameters"""
     try:
         result = post_temp_humidity.get_parameter()

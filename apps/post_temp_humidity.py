@@ -142,27 +142,28 @@ def create_parameter(data_to_insert=None):
             # Gestion du stepper
             last_stepper = session.query(StepperModel).order_by(StepperModel.id.desc()).first()
             
-            def get_time_delta():
+            def get_time_hour():
                 hour = datetime.datetime.now().hour
                 if hour <= 6:
-                    return datetime.timedelta(hours=6)
+                    return datetime.time(6, 0, 0)
                 elif hour <= 12:
-                    return datetime.timedelta(hours=12)
+                    return datetime.time(12, 0, 0)
                 elif hour <= 18:
-                    return datetime.timedelta(hours=18)
-                return datetime.timedelta(hours=6)
+                    return datetime.time(18, 0, 0)
+                return datetime.time(6, 0, 0)
 
-            now_timedelta = get_time_delta()
+            now_time = get_time_hour()
+            
             stepper_status = parameter_data.get('stat_stepper', True)
 
             if last_stepper:
                 # Mise à jour du stepper existant
-                last_stepper.start_date = now_timedelta
+                last_stepper.start_date = now_time
                 last_stepper.status = stepper_status
             else:
                 # Création d'un nouveau stepper
                 new_stepper = StepperModel(
-                    start_date=now_timedelta,
+                    start_date=now_time,
                     status=stepper_status
                 )
                 session.add(new_stepper)

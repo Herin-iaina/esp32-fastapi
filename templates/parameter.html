@@ -1,42 +1,53 @@
-<div id="parameterModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Paramètres - Monitoring Capteurs</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="/static/style.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/bootstrap-icons/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="/static/parameter.css">
+    <script src="/static/parameter.js" defer></script>
+</head>
+<body>
+    <header>
+        <nav>
+            <div class="nav-links">
+                <a href="/">Accueil</a>
+                <a href="/parameter" class="active">Paramètres</a>
+            </div>
+        </nav>
+    </header>
+    <main>
+        <div id="parameterPage" class="parameter-page">
             <h2>Configuration des Paramètres</h2>
-            <span class="close">&times;</span>
-        </div>
-        <div class="modal-body">
             <form id="parameterForm">
                 <div class="form-group">
                     <label for="temperature">Température (23°C - 50°C)</label>
-                    <input type="number" id="temperature" min="23" max="50" required>
+                    <input type="number" id="temperature" name="temperature" min="23" max="50" step="0.1" required>
                 </div>
-
                 <div class="form-group">
                     <label for="humidity">Humidité (40% - 100%)</label>
-                    <input type="number" id="humidity" min="40" max="100" required>
+                    <input type="number" id="humidity" name="humidity" min="40" max="100" step="0.1" required>
                 </div>
-
                 <div class="form-group">
-                    <label for="startDate">Date de début</label>
-                    <input type="datetime-local" id="startDate" required>
+                    <label for="start_date">Date de début</label>
+                    <input type="datetime-local" id="start_date" name="start_date" required>
                 </div>
-
                 <div class="form-group">
-                    <label for="statStepper">État du stepper</label>
-                    <select id="statStepper" required>
+                    <label for="stat_stepper">État du stepper</label>
+                    <select id="stat_stepper" name="stat_stepper" required>
                         <option value="true">ON</option>
                         <option value="false">OFF</option>
                     </select>
                 </div>
-
                 <div class="form-group">
-                    <label for="numberStepper">Nombre de steppers (3-10)</label>
-                    <input type="number" id="numberStepper" min="3" max="10" required>
+                    <label for="number_stepper">Nombre de steppers (3-10)</label>
+                    <input type="number" id="number_stepper" name="number_stepper" min="3" max="10" required>
                 </div>
-
                 <div class="form-group">
                     <label for="espece">Type d'espèce</label>
-                    <select id="espece" required>
+                    <select id="espece" name="espece" required>
                         <option value="option1">Poule</option>
                         <option value="option2">Canne</option>
                         <option value="option3">Oie</option>
@@ -44,17 +55,16 @@
                         <option value="option5">Autre</option>
                     </select>
                 </div>
-
                 <div class="form-group" id="timecloseGroup" style="display: none;">
                     <label for="timetoclose">Temps de fermeture (18-30 jours)</label>
-                    <input type="number" id="timetoclose" min="18" max="30">
+                    <input type="number" id="timetoclose" name="timetoclose" min="18" max="30">
                 </div>
-
                 <div class="form-actions">
                     <button type="submit" class="btn-primary">Enregistrer</button>
-                    <button type="button" class="btn-secondary" id="cancelParam">Annuler</button>
+                    <a href="/" class="btn-secondary">Retour</a>
                 </div>
             </form>
         </div>
-    </div>
-</div>
+    </main>
+</body>
+</html>

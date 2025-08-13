@@ -14,6 +14,7 @@ from sqlalchemy.pool import StaticPool
 # from pydantic import BaseSettings
 from pydantic_settings import BaseSettings
 from pydantic import Field, conint, constr
+from sqlalchemy import Time  # Ajoute cette importation
 
 from dotenv import load_dotenv
 
@@ -75,7 +76,7 @@ class StepperModel(Base):
     __tablename__ = 'stepper'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    start_date = Column(DateTime, nullable=True)
+    start_date = Column(Time, nullable=True)  # Modifie ici: DateTime -> Time
     status = Column(Boolean, default=False)
     created_at = Column(TIMESTAMP, server_default='NOW()')
 

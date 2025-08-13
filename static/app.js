@@ -265,3 +265,18 @@ window.onload = () => {
         }
     });
 };
+
+
+// Ajoute ce code dans app.js ou un JS global
+document.getElementById('openParameterModal').addEventListener('click', async () => {
+    if (!document.getElementById('parameterModal')) {
+        const resp = await fetch('/parameter', { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+        const html = await resp.text();
+        document.body.insertAdjacentHTML('beforeend', html);
+        // Charger le JS de la modale si besoin (si pas déjà chargé)
+        if (typeof window.parameterModalInit === 'function') {
+            window.parameterModalInit();
+        }
+    }
+    document.getElementById('parameterModal').style.display = 'block';
+});
