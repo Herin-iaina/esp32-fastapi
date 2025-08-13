@@ -155,7 +155,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 # Routes
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse) #HTML
 async def read_root(request: Request):
     """Main page"""
     return templates.TemplateResponse("main.html", {"request": request})
@@ -231,17 +231,11 @@ async def post_values(request: Request, api_key: str = Depends(get_api_key)):
             detail="Missing or invalid data"
         )
 
-@app.get("/getdata")
+@app.get("/getdata") # A tester
 async def get_data(api_key: str = Depends(get_api_key)):
     """Get current device status"""
     try:
-        # INCORRECT : get_last_data() retourne un dictionnaire avec average_temperature et average_humidity
-        fan_humidity_status = post_temp_humidity.get_last_data()
-        fan_status = fan_humidity_status[0]  # Cette ligne causera une erreur
-        humidifier_status = fan_humidity_status[1]  # Cette ligne causera une erreur
-        motor_status = post_temp_humidity.post_stepper_status()
-
-        # CORRECTION :
+        # Retrieve the last data entry
         data = post_temp_humidity.get_last_data()
         if data is None:
             raise HTTPException(
@@ -338,12 +332,12 @@ async def check_running_status(date_request: DateRequest):
             detail="Failed to check running status"
         )
 
-@app.get("/isrunning")
+@app.get("/isrunning") 
 async def get_running_status():
     """Get current running status"""
     return {"message": "Endpoint requires POST method with date parameter"}
 
-@app.post("/parameter", response_model=APIResponse)
+@app.post("/parameter", response_model=APIResponse) # tester et valider
 async def create_parameter(parameter_request: ParameterRequest):
     """Créer ou mettre à jour les paramètres du système"""
     try:
@@ -480,7 +474,7 @@ async def check_session():
     # This would need to be implemented based on your authentication system
     return {"is_authenticated": False}
 
-@app.get("/parametre", response_class=HTMLResponse)
+@app.get("/parametre", response_class=HTMLResponse) #HTML
 async def parametre_page(request: Request):
     """Parameters page"""
     return templates.TemplateResponse("parametre.html", {"request": request})

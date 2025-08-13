@@ -328,3 +328,33 @@ def validate_temperature(temp):
 
 def validate_humidity(humid):
     return isinstance(humid, (int, float)) and 0 <= humid <= 100
+
+
+def get_data_average():
+    try:
+        with db_manager.get_session_context() as session:
+            today = datetime.date.today()
+            query = session.query(
+                func.date_trunc('hour', DataTempModel.date_serveur).label('heure'),
+                func.avg(DataTempModel.temperature).label('temperature_moyenne'),
+                func.avg(DataTempModel.humidity).label('humidite_moyenne')
+            ).filter(
+                func.date_trunc('minute', DataTempModel.date_serveur) >= today
+            ).group_by(
+                'heure'
+            ).order_by('heure')
+
+            temperatureData = []
+            for row in query.all():
+                temperatureData.append({
+                    'hour': row.heure,
+                    'temperature': format(row.temperature_moyenne, ".2f"),
+                    'humidity': format(row.humidite_moyenne, ".2f")
+                })
+            return temperatureData
+
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération des moyennes: {e}")
+        return []
+    finally:
+        session.close()

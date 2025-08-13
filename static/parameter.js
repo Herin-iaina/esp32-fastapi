@@ -43,7 +43,16 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             document.getElementById('stat_stepper').value = data.stat_stepper ? 'true' : 'false';
             document.getElementById('number_stepper').value = data.number_stepper;
-            document.getElementById('espece').value = data.espece;
+            console.log('Valeur espece reçue:', data.espece); // Ajoutez ceci avant l'affectation
+            const especeMap = {
+                poule: 'option1',
+                canne: 'option2',
+                oie: 'option3',
+                caille: 'option4',
+                autre: 'option5'
+            };
+            const especeValue = especeMap[data.espece.toLowerCase()] || 'option1';
+            document.getElementById('espece').value = especeValue;
 
             if (data.espece === 'option5') {
                 timetocloseInput.value = data.timetoclose || '';
