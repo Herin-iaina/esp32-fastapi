@@ -1,15 +1,43 @@
-body {
-    font-family: 'Roboto', sans-serif;
-    margin: 0; 
-    background: #f5f6fa;
-    color: #222;
+/* ==================== VARIABLES CSS ==================== */
+:root {
+    --primary-color: #222e50;
+    --accent-color: #f9d923;
+    --background-color: #f5f6fa;
+    --white: #ffffff;
+    --text-dark: #222;
+    --text-muted: #666;
+    --error-color: #dc3545;
+    --success-color: #28a745;
+    --border-color: #ddd;
+    --shadow-light: 0 2px 8px rgba(0,0,0,0.1);
+    --shadow-medium: 0 4px 16px rgba(0,0,0,0.15);
+    --shadow-strong: 0 8px 32px rgba(0,0,0,0.3);
+    --border-radius: 8px;
+    --border-radius-large: 12px;
+    --transition: all 0.2s ease;
 }
 
+/* ==================== BASE ==================== */
+* {
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    margin: 0;
+    background: var(--background-color);
+    color: var(--text-dark);
+    line-height: 1.6;
+}
+
+/* ==================== HEADER & NAVIGATION ==================== */
 header {
-    background: #222e50;
-    color: #fff;
-    padding: 0;
-    box-shadow: 0 2px 8px #0001;
+    background: var(--primary-color);
+    color: var(--white);
+    box-shadow: var(--shadow-light);
+    position: sticky;
+    top: 0;
+    z-index: 100;
 }
 
 nav {
@@ -17,8 +45,8 @@ nav {
     align-items: center;
     justify-content: space-between;
     max-width: 1200px;
-    margin: auto;
-    padding: 0.5rem 1rem;
+    margin: 0 auto;
+    padding: 0.75rem 1rem;
 }
 
 .nav-links {
@@ -28,20 +56,21 @@ nav {
 }
 
 .nav-links a {
-    color: #fff;
+    color: var(--white);
     text-decoration: none;
     font-weight: 500;
-    transition: color 0.2s;
+    transition: var(--transition);
+    padding: 0.5rem 1rem;
+    border-radius: var(--border-radius);
 }
 
-.nav-links a:hover {
-    color: #f9d923;
-}
-
+.nav-links a:hover,
 .nav-links a.active {
-    color: #f9d923;
+    color: var(--accent-color);
+    background: rgba(249, 217, 35, 0.1);
 }
 
+/* ==================== USER MENU ==================== */
 .user-menu {
     position: relative;
     display: flex;
@@ -49,445 +78,101 @@ nav {
 }
 
 .user-avatar {
-    width: 38px; 
-    height: 38px;
+    width: 40px;
+    height: 40px;
     border-radius: 50%;
-    background: #f9d923;
-    color: #222e50;
+    background: var(--accent-color);
+    color: var(--primary-color);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 1.3rem;
+    font-size: 1.2rem;
     cursor: pointer;
-    margin-left: 1rem;
     border: none;
-    transition: all 0.2s;
+    transition: var(--transition);
+    font-weight: 600;
 }
 
 .user-avatar:hover {
-    background: #fff;
+    background: var(--white);
     transform: scale(1.05);
+    box-shadow: var(--shadow-medium);
 }
 
 .dropdown {
     display: none;
     position: absolute;
-    right: 0; 
-    top: 48px;
-    background: #fff;
-    color: #222;
-    min-width: 140px;
-    box-shadow: 0 2px 8px #0002;
-    border-radius: 8px;
-    z-index: 10;
+    right: 0;
+    top: 50px;
+    background: var(--white);
+    color: var(--text-dark);
+    min-width: 150px;
+    box-shadow: var(--shadow-medium);
+    border-radius: var(--border-radius);
+    z-index: 1000;
+    overflow: hidden;
 }
 
 .dropdown a {
     display: block;
-    padding: 0.8rem 1rem;
-    color: #222;
+    padding: 1rem;
+    color: var(--text-dark);
     text-decoration: none;
+    transition: var(--transition);
 }
 
 .dropdown a:hover {
-    background: #f5f6fa;
+    background: var(--background-color);
 }
 
 .user-menu.open .dropdown {
     display: block;
 }
 
+/* ==================== MAIN CONTENT ==================== */
 main {
     max-width: 1200px;
-    margin: 2rem auto 1rem auto;
+    margin: 2rem auto;
     padding: 0 1rem;
 }
 
 .section {
-    margin-bottom: 2.5rem;
+    margin-bottom: 3rem;
 }
 
 .section h2 {
     margin-bottom: 1.5rem;
-    color: #222e50;
+    color: var(--primary-color);
+    font-size: 1.5rem;
+    font-weight: 600;
 }
 
+/* ==================== SENSOR CARDS ==================== */
 .sensor-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2rem;
-    justify-content: flex-start;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 1.5rem;
 }
 
 .donut-card {
-    background: #fff;
-    border-radius: 18px;
-    box-shadow: 0 2px 8px #0001;
-    padding: 1.5rem 1rem;
-    flex: 1 1 220px;
-    min-width: 220px;
-    max-width: 320px;
+    background: var(--white);
+    border-radius: var(--border-radius-large);
+    box-shadow: var(--shadow-light);
+    padding: 1.5rem;
     display: flex;
     flex-direction: column;
     align-items: center;
-    transition: transform 0.2s, box-shadow 0.2s;
+    transition: var(--transition);
+    border: 1px solid rgba(0,0,0,0.05);
 }
 
 .donut-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-medium);
 }
 
 .donut-title {
     font-weight: 600;
-    margin-bottom: 0.5rem;
-    color: #222e50;
-}
-
-.chart-container {
-    width: 120px; 
-    height: 120px;
-    margin-bottom: 0.5rem;
-    position: relative;
-}
-
-.sensor-values {
-    font-size: 1.1rem;
-    margin-top: 0.5rem;
-    text-align: center;
-}
-
-.sensor-values span {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
-    margin: 0.2rem 0;
-}
-
-.filters {
-    display: flex;
-    gap: 1rem;
-    align-items: center;
     margin-bottom: 1rem;
-    flex-wrap: wrap;
-}
-
-.filters label {
-    font-weight: 500;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.filters input, .filters select {
-    padding: 0.5rem 0.7rem;
-    border-radius: 5px;
-    border: 1px solid #ccc;
-    font-size: 0.9rem;
-}
-
-.primary-btn, .download-btn {
-    background: #222e50;
-    color: #fff;
-    border: none;
-    border-radius: 5px;
-    padding: 0.5rem 1rem;
-    cursor: pointer;
-    transition: all 0.2s;
-    font-size: 0.9rem;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.primary-btn:hover, .download-btn:hover {
-    background: #f9d923;
-    color: #222e50;
-    transform: translateY(-1px);
-}
-
-.parameters-container {
-    background: #fff;
-    border-radius: 12px;
-    box-shadow: 0 2px 8px #0001;
-    overflow: hidden;
-}
-
-.param-table {
-    width: 100%;
-    border-collapse: collapse;
-}
-
-.param-table th, .param-table td {
-    padding: 1rem;
-    text-align: left;
-    border-bottom: 1px solid #eee;
-}
-
-.param-table th {
-    background: #f8f9fa;
-    font-weight: 600;
-    color: #222e50;
-}
-
-.param-table tbody tr:hover {
-    background: #f8f9fa;
-}
-
-footer {
-    background: #222e50;
-    color: #fff;
-    text-align: center;
-    padding: 1rem 0;
-    margin-top: 2rem;
-}
-
-/* MODAL - CSS CORRIGÉ */
-.modal-bg {
-    /* Position fixe pour couvrir tout l'écran */
-    position: fixed !important;
-    top: 0 !important;
-    left: 0 !important;
-    right: 0 !important;
-    bottom: 0 !important;
-    width: 100vw !important;
-    height: 100vh !important;
-    
-    /* Arrière-plan */
-    background-color: rgba(0, 0, 0, 0.6) !important;
-    backdrop-filter: blur(3px);
-    
-    /* Z-index très élevé */
-    z-index: 999999 !important;
-    
-    /* Flexbox pour centrer */
-    display: flex !important;
-    justify-content: center !important;
-    align-items: center !important;
-    
-    /* Caché par défaut */
-    opacity: 0 !important;
-    visibility: hidden !important;
-    pointer-events: none !important;
-    
-    /* Transition */
-    transition: all 0.3s ease !important;
-}
-
-/* État visible du modal - SPÉCIFICITÉ MAXIMALE */
-.modal-bg.show,
-body .modal-bg.show,
-html body .modal-bg.show {
-    opacity: 1 !important;
-    visibility: visible !important;
-    pointer-events: auto !important;
-}
-
-/* Contenu du modal */
-.modal {
-    background: white !important;
-    padding: 2rem !important;
-    border-radius: 12px !important;
-    width: 90% !important;
-    max-width: 400px !important;
-    position: relative !important;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4) !important;
-    
-    /* Animation d'entrée */
-    transform: translateY(-20px) scale(0.95) !important;
-    transition: transform 0.3s ease !important;
-    
-    /* Assurer que le modal est visible */
-    z-index: 1000000 !important;
-    
-    /* Assurer la visibilité du contenu */
-    opacity: 1 !important;
-    visibility: visible !important;
-    display: block !important;
-}
-
-/* Animation quand le modal s'affiche */
-.modal-bg.show .modal,
-body .modal-bg.show .modal,
-html body .modal-bg.show .modal {
-    transform: translateY(0) scale(1) !important;
-    opacity: 1 !important;
-    visibility: visible !important;
-    display: block !important;
-}
-
-.modal h2 {
-    margin: 0 0 1.5rem 0 !important;
-    color: #222e50 !important;
-    text-align: center !important;
-    font-size: 1.5rem !important;
-    opacity: 1 !important;
-    visibility: visible !important;
-    display: block !important;
-}
-
-.close-btn {
-    position: absolute !important;
-    top: 1rem !important;
-    right: 1rem !important;
-    background: none !important;
-    border: none !important;
-    font-size: 1.5rem !important;
-    cursor: pointer !important;
-    padding: 0.5rem !important;
-    color: #999 !important;
-    transition: color 0.2s !important;
-    width: 30px !important;
-    height: 30px !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    border-radius: 50% !important;
-    z-index: 1000001 !important;
-    opacity: 1 !important;
-    visibility: visible !important;
-}
-
-.close-btn:hover {
-    color: #f9d923 !important;
-    background: rgba(249, 217, 35, 0.1) !important;
-}
-
-/* Style du formulaire */
-#loginForm {
-    display: flex !important;
-    flex-direction: column !important;
-    gap: 1rem !important;
-    position: relative !important;
-    z-index: 1000001 !important;
-    opacity: 1 !important;
-    visibility: visible !important;
-}
-
-#loginForm input[type="text"],
-#loginForm input[type="password"] {
-    width: 100% !important;
-    padding: 0.8rem !important;
-    border: 2px solid #ddd !important;
-    border-radius: 8px !important;
-    font-size: 1rem !important;
-    transition: border-color 0.2s !important;
-    box-sizing: border-box !important;
-    opacity: 1 !important;
-    visibility: visible !important;
-    display: block !important;
-}
-
-#loginForm input[type="text"]:focus,
-#loginForm input[type="password"]:focus {
-    outline: none !important;
-    border-color: #f9d923 !important;
-}
-
-#loginForm label {
-    display: flex !important;
-    align-items: center !important;
-    gap: 0.5rem !important;
-    font-size: 0.9rem !important;
-    color: #666 !important;
-    opacity: 1 !important;
-    visibility: visible !important;
-}
-
-#loginForm input[type="checkbox"] {
-    width: auto !important;
-    opacity: 1 !important;
-    visibility: visible !important;
-}
-
-#loginForm button {
-    background: #222e50 !important;
-    color: #fff !important;
-    border: none !important;
-    border-radius: 8px !important;
-    padding: 0.8rem 1.5rem !important;
-    font-size: 1rem !important;
-    cursor: pointer !important;
-    margin-top: 0.5rem !important;
-    transition: all 0.2s !important;
-    font-weight: 500 !important;
-    opacity: 1 !important;
-    visibility: visible !important;
-    display: block !important;
-}
-
-#loginForm button:hover { 
-    background: #f9d923 !important; 
-    color: #222e50 !important; 
-    transform: translateY(-1px) !important;
-}
-
-/* Message d'erreur */
-.error-msg {
-    color: #dc3545 !important;
-    margin-bottom: 1rem !important;
-    font-size: 0.9rem !important;
-    padding: 0.5rem !important;
-    background: rgba(220, 53, 69, 0.1) !important;
-    border-radius: 6px !important;
-    border-left: 3px solid #dc3545 !important;
-    display: none !important;
-    opacity: 1 !important;
-    visibility: visible !important;
-}
-
-.error-msg:not(:empty) {
-    display: block !important;
-}
-
-/* Responsive */
-@media (max-width: 900px) {
-    .sensor-grid { 
-        justify-content: center; 
-    }
-    main { 
-        padding: 0 0.5rem; 
-    }
-}
-
-@media (max-width: 600px) {
-    nav { 
-        flex-direction: column; 
-        gap: 0.5rem; 
-        padding: 1rem;
-    }
-    
-    .donut-card { 
-        min-width: 200px; 
-    }
-    
-    .filters { 
-        flex-direction: column; 
-        align-items: stretch;
-        gap: 0.5rem; 
-    }
-    
-    .filters label {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 0.3rem;
-    }
-    
-    .modal {
-        padding: 1.5rem;
-        margin: 1rem;
-        width: calc(100% - 2rem);
-    }
-    
-    .param-table {
-        font-size: 0.8rem;
-    }
-    
-    .param-table th, 
-    .param-table td {
-        padding: 0.5rem;
-    }
-}
-
-/* DEBUG - Supprimer après test */
-/* Tous les styles de debug supprimés - utilisation des couleurs normales */
+    color: var(--primary-color);
+    font-size: 1.1rem;

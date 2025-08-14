@@ -10,6 +10,7 @@ const API_CONFIG = {
 // Variables globales
 let historyChart;
 let isLoggedIn = false;
+let accessToken = null;
 
 // Fonction utilitaire pour les appels API
 async function apiCall(endpoint, options = {}) {
@@ -332,6 +333,85 @@ function initializeDateFilters() {
     }
 }
 
+
+// Fonction pour rafraîchir le token d'accès
+async function refreshAccessToken() {
+    const refreshToken = localStorage.getItem('refreshToken');
+    if (!refreshToken) {
+        console.error('No refresh token found. Logging out.');
+        logout();
+        return null;
+    }
+
+    try {
+        const response = await fetch('/refresh-token', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ refresh_token: refreshToken })
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            accessToken = data.access_token;
+            console.log('Access token successfully refreshed!');
+            return accessToken;
+        } else {
+            console.error('Failed to refresh token. Logging out.');
+            logout();
+            return null;
+        }
+    } catch (error) {
+        console.error('Network error while refreshing token:', error);
+        logout();
+        return null;
+    }
+}
+
+// Fonction pour mettre à jour l'affichage de l'interface utilisateur après la connexion/déconnexion
+function updateUI(connected = false) {
+    const userDropdown = document.getElementById('userDropdown');
+    const loginBtn = document.getElementById('loginBtn');
+    
+    if (userDropdown && loginBtn) {
+        if (connected) {
+            userDropdown.style.display = 'block';
+            loginBtn.innerHTML = '<i class="bi bi-person-check"></i>';
+            loginBtn.title = 'Connecté';
+        } else {
+            userDropdown.style.display = 'none';
+            loginBtn.innerHTML = '<i class="bi bi-person"></i>';
+            loginBtn.title = 'Se connecter';
+        }
+    }
+    // Appel de la fonction pour mettre à jour le menu de navigation
+    if (typeof updateNavMenu === 'function') {
+        updateNavMenu();
+    }
+}
+
+// Fonction de déconnexion
+function logout() {
+    isLoggedIn = false;
+    accessToken = null;
+    localStorage.removeItem('refreshToken');
+    updateUI(false);
+    console.log('User logged out');
+}
+
+// Fonction pour mettre à jour l'affichage du menu de navigation
+function updateNavMenu() {
+    const paramLink = document.querySelector('nav .nav-links a[href="/parameter"]');
+    if (paramLink) {
+        if (isLoggedIn) {
+            paramLink.style.display = 'inline-block'; // Ou 'block'
+        } else {
+            paramLink.style.display = 'none';
+        }
+    }
+}
+
 // Gestion de l'authentification
 function initializeAuth() {
     const loginBtn = document.getElementById('loginBtn');
@@ -383,6 +463,8 @@ function initializeAuth() {
         });
     }
 
+    
+
     // Gestion du formulaire de connexion
     if (loginForm) {
         loginForm.addEventListener('submit', async function(e) {
@@ -409,8 +491,8 @@ function initializeAuth() {
                 console.log('Attempting login...', { username, rememberMe });
                 
                 // Appel API réel (décommentez et adaptez)
-                /*
-                const response = await fetch('/api/login', {
+                
+                const response = await fetch('/login', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -425,28 +507,58 @@ function initializeAuth() {
                 if (response.ok) {
                     const data = await response.json();
                     // Traitement de la réponse
-                } else {
-                    const errorData = await response.json();
-                    throw new Error(errorData.message || 'Erreur de connexion');
-                }
-                */
+                    console.log('Login successful', data);
 
-                // Simulation pour test
-                if (username === 'admin' && password === 'admin') {
-                    console.log('Login successful');
-                    loginModal.classList.remove('show');
+                    // Mettre à jour l'interface après une connexion réussie
                     isLoggedIn = true;
+                    accessToken = data.access_token; // Stocker le token d'accès
+                    // Stocker le refresh token si "rememberMe" est coché
+                    if (data.refresh_token) {
+                        localStorage.setItem('refreshToken', data.refresh_token);
+                    }
+
+                    loginModal.classList.remove('show');
+                    updateUI(true);
                     
-                    // Mettre à jour l'interface
+                    const userDropdown = document.getElementById('userDropdown');
                     if (userDropdown) {
                         userDropdown.style.display = 'block';
                     }
                     
-                    loginBtn.innerHTML = '<i class="bi bi-person-check"></i>';
-                    loginBtn.title = 'Connecté';
+                    const loginBtn = document.getElementById('loginBtn');
+                    if (loginBtn) {
+                        loginBtn.innerHTML = '<i class="bi bi-person-check"></i>';
+                        loginBtn.title = 'Connecté';
+                    }
+
+                    // Mettre à jour le menu de navigation
+                    if (typeof updateNavMenu === 'function') {
+                        updateNavMenu();
+                    }
+
                 } else {
-                    throw new Error('Nom d\'utilisateur ou mot de passe incorrect');
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || 'Erreur de connexion');
                 }
+                
+
+                // // Simulation pour test
+                // if (username === 'admin' && password === 'admin') {
+                //     console.log('Login successful');
+                //     loginModal.classList.remove('show');
+                //     isLoggedIn = true;
+                    
+                //     // Mettre à jour l'interface
+                //     if (userDropdown) {
+                //         userDropdown.style.display = 'block';
+                //         updateNavMenu();
+                //     }
+                    
+                //     loginBtn.innerHTML = '<i class="bi bi-person-check"></i>';
+                //     loginBtn.title = 'Connecté';
+                // } else {
+                //     throw new Error('Nom d\'utilisateur ou mot de passe incorrect');
+                // }
                 
             } catch (error) {
                 console.error('Erreur de connexion:', error);
@@ -462,6 +574,7 @@ function initializeAuth() {
         logoutBtn.addEventListener('click', function(e) {
             e.preventDefault();
             isLoggedIn = false;
+            logout();
             
             if (userDropdown) {
                 userDropdown.style.display = 'none';
@@ -491,6 +604,7 @@ function initializeApp() {
     
     // Initialiser l'authentification
     initializeAuth();
+    updateNavMenu();
     
     // Charger les données initiales
     fetchRealtimeSensors();
@@ -526,3 +640,5 @@ window.addEventListener('unhandledrejection', function(e) {
     console.error('Unhandled promise rejection:', e.reason);
     showError('Une erreur inattendue s\'est produite');
 });
+
+
