@@ -81,13 +81,13 @@
             <h2>Connexion</h2>
             <div id="loginError" class="error-msg"></div>
             <form id="loginForm">
-                <input type="text" id="loginUsername" placeholder="Nom d'utilisateur" required>
-                <input type="password" id="loginPassword" placeholder="Mot de passe" required>
+                <input type="text" id="loginUsername" placeholder="Nom d'utilisateur" required autocomplete="username">
+                <input type="password" id="loginPassword" placeholder="Mot de passe" required autocomplete="current-password">
                 <label>
                     <input type="checkbox" id="rememberMe">
                     Se souvenir de moi
                 </label>
-                <button type="submit" class="primary-btn" id="submitLogin">Se connecter</button>
+                <button type="submit" class="primary-btn">Se connecter</button>
             </form>
         </div>
     </div>
