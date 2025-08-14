@@ -86,7 +86,7 @@ api_key_manager = APIKeyManager()
 def get_api_key(request: Request) -> str:
     """Extract API key from headers"""
     api_key = request.headers.get('X-API-KEY')
-    logger.info(f"Received API key: {api_key}")  # Remplace print par logger.info
+    # logger.info(f"Received API key: {api_key}")  # Remplace print par logger.info
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -434,6 +434,7 @@ async def get_parameter_page(request: Request):
 @app.get("/api/parameter")
 async def get_parameter_api(request: Request, api_key: str = Depends(get_api_key)):
     """Get system parameters"""
+    logger.info("Received request to get system parameters")  
     try:
         result = post_temp_humidity.get_parameter()
         return result

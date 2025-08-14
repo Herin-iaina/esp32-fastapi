@@ -244,28 +244,79 @@ function downloadChart() {
 
 // Fonction pour charger les paramètres actuels
 async function fetchCurrentParameters() {
+        function joursRestants(data) {
+        const startTime = new Date(data.start_date).getTime();
+        const now = Date.now();
+        // console.log('Start time:', startTime); // Heure de début en ms
+        // console.log('Current time:', now); // Heure actuelle en ms
+
+        const totalDuration = Number(data.timetoclose); // Durée totale en jours
+
+        // Temps restant e jours
+        const remainingDays = Math.floor((now - startTime) / (1000 * 60 * 60 * 24));
+        let remaining = totalDuration - remainingDays;
+      
+        if (remaining < 0) remaining = 0;
+
+        // Retourner uniquement le nombre de jours
+        return remaining;
+    }
+
     try {
-        // Cette fonction devra être adaptée selon votre API
-        // const response = await apiCall('/parameters');
+        const response = await fetch('/api/parameter', {
+            method: 'GET',
+            headers: API_CONFIG.headers
+        });
+
+        console.log('Réponse brute de l\'API :', response);
+
+        if (!response.ok) throw new Error(`Erreur API : ${response.status}`);
+
+        const data = await response.json();
+        console.log('Données des paramètres reçues :', data);
+
         const paramTable = document.querySelector('#paramTable tbody');
-        if (paramTable) {
-            // Exemple de données statiques - remplacer par l'appel API réel
-            paramTable.innerHTML = `
-                <tr>
-                    <td>25°C</td>
-                    <td>60%</td>
-                    <td>2024-01-15</td>
-                    <td>Actif</td>
-                    <td>3</td>
-                    <td>Tomates</td>
-                    <td>5 jours</td>
-                </tr>
+        if (!paramTable) {
+            console.error('Élément #paramTable tbody non trouvé');
+            return;
+        }
+
+        // Vider le tableau
+        paramTable.innerHTML = '';
+        console.log('Tableau vidé');
+
+        if (data && typeof data === 'object') {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${data.temperature + '°C'?? 'N/A'}</td>
+                <td>${data.humidity != null ? data.humidity + '%' : 'N/A'}</td>
+                <td>${data.start_date ? new Date(data.start_date).toLocaleDateString() : 'N/A'}</td>
+                <td>${data.stat_stepper ? 'Actif' : 'Inactif'}</td>
+                <td>${data.number_stepper ?? 'N/A'}</td>
+                <td>${data.espece ?? 'N/A'}</td>
+                <td>${joursRestants(data) + ' jours'?? 'N/A'}</td>
             `;
+            paramTable.appendChild(row);
+        } else {
+            console.warn('Données invalides, affichage d\'une ligne par défaut');
+            const defaultRow = document.createElement('tr');
+            defaultRow.innerHTML = `
+                <td>110</td>
+                <td>60%</td>
+                <td>2024-01-15</td>
+                <td>Actif</td>
+                <td>3</td>
+                <td>Tomates</td>
+                <td>5 jours</td>
+            `;
+            paramTable.appendChild(defaultRow);
         }
     } catch (error) {
-        console.error('Erreur lors du chargement des paramètres:', error);
+        console.error('Erreur lors du chargement des paramètres :', error);
     }
 }
+
+
 
 // Initialisation des dates par défaut
 function initializeDateFilters() {
