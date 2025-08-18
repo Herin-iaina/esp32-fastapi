@@ -1053,7 +1053,7 @@ if __name__ == "__main__":
     logger.info(f"Niveau de log: {log_level}")
     
     uvicorn.run(
-        "main:app",
+        "run:app",
         host=host,
         port=port,
         reload=reload,

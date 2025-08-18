@@ -176,3 +176,18 @@ main {
     margin-bottom: 1rem;
     color: var(--primary-color);
     font-size: 1.1rem;
+}
+
+.sr-only {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0);
+  border: 0;
+}
+
+.modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.35); }
+.modal-bg.show { display: flex; align-items: center; justify-content: center; }
+.modal { background: var(--white); border-radius: var(--border-radius-large); box-shadow: var(--shadow-strong); padding: 1.5rem; max-width: 420px; width: 92%; }
+.close-btn { background: transparent; border: 0; font-size: 1.5rem; cursor: pointer; }
+.error-msg { color: var(--error-color); min-height: 1.25rem; }

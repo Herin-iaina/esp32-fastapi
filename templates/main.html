@@ -1,98 +1,38 @@
-<!DOCTYPE html>
-<html lang="fr">
+<!-- HEAD amélioré -->
 <head>
-    <meta charset="UTF-8">
-    <title>Monitoring Capteurs</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link href="/static/style.css" rel="stylesheet">
-    <link rel="stylesheet" href="/static/bootstrap-icons/font/bootstrap-icons.css">
-    <link rel="stylesheet" href="/static/parameter.css">
+  <meta charset="UTF-8">
+  <title>Monitoring Capteurs</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="/static/style.css" rel="stylesheet">
+  <link rel="stylesheet" href="/static/bootstrap-icons/font/bootstrap-icons.css">
+  <link rel="stylesheet" href="/static/parameter.css">
+  <!-- Sécurité (compléter côté serveur idéalement via en-têtes) -->
+  <meta http-equiv="X-Content-Type-Options" content="nosniff">
+  <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
 </head>
-<body>
-    <header>
-        <nav>
-            <div class="nav-links">
-                <a href="/" class="active">Accueil</a>
-                <a href="/parameter">Paramètres</a>
-            </div>
-            <div class="user-menu" id="userMenu">
-                <button id="loginBtn" class="user-avatar" title="Se connecter">
-                    <i class="bi bi-person"></i>
-                </button>
-                <div class="dropdown" id="userDropdown">
-                    <a href="#" id="logoutBtn">Déconnexion</a>
-                </div>
-            </div>
-        </nav>
-    </header>
 
-    <main>
-        <!-- Section 1: Données en temps réel -->
-        <section class="section" id="realtimeSection">
-            <h2>Données en temps réel</h2>
-            <div id="sensorCards" class="sensor-grid"></div>
-        </section>
+...
 
-        <!-- Section 2: Graphique historique -->
-        <section class="section">
-            <h2>Historique</h2>
-            <div class="filters">
-                <label>
-                    Période :
-                    <input type="date" id="startDate">
-                    <input type="date" id="endDate">
-                </label>
-                <button id="refreshData" class="primary-btn">Actualiser</button>
-                <button class="download-btn" id="downloadGraph">
-                    <i class="bi bi-download"></i> Télécharger
-                </button>
-            </div>
-            <div class="chart-container">
-                <canvas id="historyChart"></canvas>
-            </div>
-        </section>
+<!-- Modal de connexion accessible -->
+<div id="loginModal" class="modal-bg" role="dialog" aria-modal="true" aria-labelledby="loginTitle" aria-describedby="loginDesc">
+  <div class="modal" tabindex="-1">
+    <button class="close-btn" id="closeLogin" type="button" aria-label="Fermer">&times;</button>
+    <h2 id="loginTitle">Connexion</h2>
+    <p id="loginDesc" class="sr-only">Entrez vos identifiants pour accéder aux paramètres.</p>
+    <div id="loginError" class="error-msg" aria-live="polite"></div>
+    <form id="loginForm" autocomplete="on" novalidate>
+      <label class="sr-only" for="loginUsername">Nom d'utilisateur</label>
+      <input type="text" id="loginUsername" placeholder="Nom d'utilisateur" required autocomplete="username">
+      <label class="sr-only" for="loginPassword">Mot de passe</label>
+      <input type="password" id="loginPassword" placeholder="Mot de passe" required autocomplete="current-password">
+      <label>
+        <input type="checkbox" id="rememberMe"> Se souvenir de moi
+      </label>
+      <button type="submit" class="primary-btn">Se connecter</button>
+    </form>
+  </div>
+</div>
 
-        <!-- Section 3: Paramètres actuels -->
-        <section class="section">
-            <h2>Paramètres actuels</h2>
-            <div class="parameters-container">
-                <table id="paramTable" class="param-table">
-                    <thead>
-                        <tr>
-                            <th>Température</th>
-                            <th>Humidité</th>
-                            <th>Date début</th>
-                            <th>Stepper</th>
-                            <th>Nombre steppers</th>
-                            <th>Espèce</th>
-                            <th>Temps restant</th>
-                        </tr>
-                    </thead>
-                    <tbody></tbody>
-                </table>
-            </div>
-        </section>
-    </main>
-
-    <!-- Modal de connexion -->
-    <div id="loginModal" class="modal-bg">
-        <div class="modal">
-            <button class="close-btn" id="closeLogin">&times;</button>
-            <h2>Connexion</h2>
-            <div id="loginError" class="error-msg"></div>
-            <form id="loginForm">
-                <input type="text" id="loginUsername" placeholder="Nom d'utilisateur" required autocomplete="username">
-                <input type="password" id="loginPassword" placeholder="Mot de passe" required autocomplete="current-password">
-                <label>
-                    <input type="checkbox" id="rememberMe">
-                    Se souvenir de moi
-                </label>
-                <button type="submit" class="primary-btn">Se connecter</button>
-            </form>
-        </div>
-    </div>
-
-    <script src="/static/chart.min.js"></script>
-    <script src="/static/app.js"></script>
-</body>
-</html>
+<!-- Scripts en defer pour éviter le blocage du rendu -->
+<script src="/static/chart.min.js" defer></script>
+<script src="/static/app.js" defer></script>
