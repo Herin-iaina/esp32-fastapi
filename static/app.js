@@ -1,13 +1,13 @@
 /* ========================================================================== */
 /*  FRONT API — Config & utilitaires                                          */
-/*  - Aligne le front sur le backend Best-Of (FastAPI + JWT via cookies)      */
+/*  - Aligne le front sur le backend FastAPI (JWT via cookies httpOnly)       */
 /*  - Gère les appels, erreurs, (ré-)auth & rafraîchissement access token     */
 /* ========================================================================== */
 
 /**
  * Configuration API :
  * - baseUrl : si backend sur un autre domaine (ex: https://api.mondomaine.com)
- * - headers : en-têtes “génériques” (le Bearer est ajouté dynamiquement)
+ * - headers : en-têtes "génériques" (le Bearer est ajouté dynamiquement)
  * - useCookies : true si le refresh token est en httpOnly cookie (recommandé)
  */
 const API_CONFIG = {
@@ -60,7 +60,12 @@ async function apiCall(endpoint, options = {}, retry = true) {
   if (!res.ok) {
     // Essaye de renvoyer un message utile (texte ou JSON)
     let detail = '';
-    try { detail = await res.text(); } catch {}
+    try { 
+      const errorData = await res.json(); 
+      detail = errorData.detail || errorData.message || '';
+    } catch { 
+      detail = await res.text().catch(() => res.statusText);
+    }
     throw new Error(`API ${res.status}: ${detail || res.statusText}`);
   }
 
@@ -77,23 +82,38 @@ function showError(message) {
 
 /* ========================================================================== */
 /*  Capteurs — Données temps réel                                             */
-/*  GET /sensors/realtime -> { sensor_data: [{sensor, temperature, humidity}]}*/
+/*  GET /WeatherData -> [{ sensor, temperature, humidity }]                   */
 /* ========================================================================== */
 
 /**
- * Charge les mesures “temps réel” et dessine les cartes donut.
- * - Remplace l'ancien endpoint /WeatherData
+ * Charge les mesures "temps réel" et dessine les cartes donut.
+ * - Utilise l'endpoint /WeatherData existant
  */
 async function fetchRealtimeSensors() {
   try {
-    const response = await apiCall('/sensors/realtime');
+    // Ajouter la clé API dans les headers
+    const apiKey = 'Votre_Cle_API'; // À adapter selon votre configuration
+    const response = await fetch(`${API_CONFIG.baseUrl}/WeatherData`, {
+      headers: {
+        'X-API-KEY': apiKey,
+        ...API_CONFIG.headers
+      },
+      credentials: API_CONFIG.useCookies ? 'include' : 'same-origin'
+    });
+
+    if (!response.ok) {
+      throw new Error(`Erreur ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
     const sensorGrid = document.getElementById('sensorCards');
     if (!sensorGrid) return;
 
     sensorGrid.innerHTML = '';
 
-    if (response?.sensor_data?.length) {
-      response.sensor_data.forEach((sensor, idx) => {
+    // La réponse de /WeatherData est directement un tableau
+    if (Array.isArray(data) && data.length > 0) {
+      data.forEach((sensor, idx) => {
         const cardHTML = `
           <div class="donut-card">
             <div class="donut-title">Capteur ${sensor.sensor}</div>
@@ -118,7 +138,7 @@ async function fetchRealtimeSensors() {
 }
 
 /**
- * Dessine un donut Chart.js “Température vs Humidité”.
+ * Dessine un donut Chart.js "Température vs Humidité".
  * @param {string} canvasId - ID du canvas
  * @param {number} temp - Température en °C
  * @param {number} hum - Humidité en %
@@ -159,12 +179,12 @@ function drawDonut(canvasId, temp, hum) {
 
 /* ========================================================================== */
 /*  Historique — Graphique ligne                                              */
-/*  GET /sensors/history?start=YYYY-MM-DD&end=YYYY-MM-DD                      */
+/*  GET /alldata?date_int=YYYY-MM-DD&date_end=YYYY-MM-DD                      */
 /* ========================================================================== */
 
 /**
  * Récupère la série historique et trace le graphique.
- * - Remplace l’ancien endpoint /alldata?date_int=...&date_end=...
+ * - Utilise l'endpoint /alldata existant avec paramètres de date
  */
 async function fetchHistoryData() {
   try {
@@ -172,14 +192,27 @@ async function fetchHistoryData() {
     const endDate = document.getElementById('endDate')?.value;
     if (!startDate || !endDate) return;
 
-    const response = await apiCall(`/sensors/history?start=${startDate}&end=${endDate}`);
-    if (!Array.isArray(response) || response.length === 0) return;
+    // Ajouter la clé API dans les headers
+    const apiKey = 'Votre_Cle_API'; // À adapter selon votre configuration
+    const response = await fetch(`${API_CONFIG.baseUrl}/alldata?date_int=${startDate}&date_end=${endDate}`, {
+      headers: {
+        'X-API-KEY': apiKey,
+        ...API_CONFIG.headers
+      },
+      credentials: API_CONFIG.useCookies ? 'include' : 'same-origin'
+    });
 
-    const labels = response.map(i => i.date);
-    const tempData = response.map(i => i.temperature_moyenne);
-    const humData = response.map(i => i.humidite_moyenne);
+    if (!response.ok) {
+      throw new Error(`Erreur ${response.status}: ${response.statusText}`);
+    }
 
-    // Détruire l’ancien graphique pour éviter les leaks
+    const data = await response.json();
+    if (!Array.isArray(data) || data.length === 0) return;
+
+    // Traiter les données pour le graphique
+    const processedData = processHistoryData(data);
+    
+    // Détruire l'ancien graphique pour éviter les leaks
     if (historyChart) historyChart.destroy();
 
     const ctx = document.getElementById('historyChart');
@@ -188,10 +221,24 @@ async function fetchHistoryData() {
     historyChart = new Chart(ctx.getContext('2d'), {
       type: 'line',
       data: {
-        labels,
+        labels: processedData.labels,
         datasets: [
-          { label: 'Température (°C)', data: tempData, borderColor: '#f9d923', backgroundColor: 'rgba(249,217,35,0.1)', tension: 0.3, fill: false },
-          { label: 'Humidité (%)', data: humData, borderColor: '#36a2eb', backgroundColor: 'rgba(54,162,235,0.1)', tension: 0.3, fill: false }
+          { 
+            label: 'Température (°C)', 
+            data: processedData.temperatures, 
+            borderColor: '#f9d923', 
+            backgroundColor: 'rgba(249,217,35,0.1)', 
+            tension: 0.3, 
+            fill: false 
+          },
+          { 
+            label: 'Humidité (%)', 
+            data: processedData.humidity, 
+            borderColor: '#36a2eb', 
+            backgroundColor: 'rgba(54,162,235,0.1)', 
+            tension: 0.3, 
+            fill: false 
+          }
         ]
       },
       options: {
@@ -214,6 +261,46 @@ async function fetchHistoryData() {
   }
 }
 
+/**
+ * Traite les données historiques brutes pour le graphique
+ * @param {Array} rawData - Données brutes de l'API
+ * @returns {Object} - Données formatées pour Chart.js
+ */
+function processHistoryData(rawData) {
+  // Grouper par date et calculer les moyennes
+  const dateGroups = {};
+  
+  rawData.forEach(item => {
+    const date = new Date(item.date_serveur).toLocaleDateString();
+    if (!dateGroups[date]) {
+      dateGroups[date] = {
+        temperatures: [],
+        humidity: []
+      };
+    }
+    dateGroups[date].temperatures.push(parseFloat(item.temperature));
+    dateGroups[date].humidity.push(parseFloat(item.humidity));
+  });
+
+  const labels = [];
+  const temperatures = [];
+  const humidity = [];
+
+  Object.keys(dateGroups).sort().forEach(date => {
+    const group = dateGroups[date];
+    labels.push(date);
+    
+    // Calculer les moyennes
+    const avgTemp = group.temperatures.reduce((a, b) => a + b, 0) / group.temperatures.length;
+    const avgHum = group.humidity.reduce((a, b) => a + b, 0) / group.humidity.length;
+    
+    temperatures.push(avgTemp.toFixed(1));
+    humidity.push(avgHum.toFixed(1));
+  });
+
+  return { labels, temperatures, humidity };
+}
+
 /** Télécharge le canvas Chart.js en PNG */
 function downloadChart() {
   if (!historyChart) return showError('Aucun graphique disponible pour le téléchargement');
@@ -224,12 +311,12 @@ function downloadChart() {
 }
 
 /* ========================================================================== */
-/*  Paramètres — Tableau “état courant”                                       */
-/*  GET /parameters/current -> {temperature, humidity, start_date, ...}       */
+/*  Paramètres — Tableau "état courant"                                       */
+/*  GET /api/parameter -> {temperature, humidity, start_date, ...}            */
 /* ========================================================================== */
 
 /**
- * Calcule les jours restants à partir d’une date ISO (start_date) et d’une
+ * Calcule les jours restants à partir d'une date ISO (start_date) et d'une
  * durée totale (timetoclose en jours).
  */
 function remainingDays(fromISO, totalDays) {
@@ -239,10 +326,16 @@ function remainingDays(fromISO, totalDays) {
   return Math.max((Number(totalDays) || 0) - elapsed, 0);
 }
 
-/** Charge et affiche la ligne “paramètres actuels”. */
+/** Charge et affiche la ligne "paramètres actuels". */
 async function fetchCurrentParameters() {
   try {
-    const data = await apiCall('/parameters/current');
+    // Cette fonction nécessite une authentification
+    if (!accessToken) {
+      console.log('Non authentifié - paramètres non chargés');
+      return;
+    }
+
+    const data = await apiCall('/api/parameter');
     const tbody = document.querySelector('#paramTable tbody');
     if (!tbody) return;
 
@@ -262,17 +355,17 @@ async function fetchCurrentParameters() {
       tbody.appendChild(tr);
     }
   } catch (e) {
-    console.error(e);
+    console.error('Erreur lors du chargement des paramètres:', e);
   }
 }
 
 /* ========================================================================== */
 /*  Auth — Login / Refresh / Logout                                           */
-/*  POST /auth/login  -> { access_token, expires_in }                          */
-/*  POST /auth/refresh (httpOnly cookie) -> { access_token }                   */
+/*  POST /login  -> { access_token, expires_in }                              */
+/*  POST /refresh-token -> { access_token }                                   */
 /* ========================================================================== */
 
-/** Tente de rafraîchir l’access token (refresh côté cookie httpOnly). */
+/** Tente de rafraîchir l'access token (refresh côté cookie httpOnly). */
 async function refreshAccessToken() {
   try {
     const res = await fetch(`${API_CONFIG.baseUrl}/auth/refresh`, {
@@ -297,7 +390,7 @@ function logout() {
   updateNavMenu();
 }
 
-/** Met à jour quelques éléments visuels selon l’état connexion. */
+/** Met à jour quelques éléments visuels selon l'état connexion. */
 function updateUI(connected = false) {
   const userDropdown = document.getElementById('userDropdown');
   const loginBtn = document.getElementById('loginBtn');
@@ -308,7 +401,7 @@ function updateUI(connected = false) {
   }
 }
 
-/** Affiche/masque le lien “Paramètres” selon connexion. */
+/** Affiche/masque le lien "Paramètres" selon connexion. */
 function updateNavMenu() {
   const paramLink = document.querySelector('nav .nav-links a[href="/parameter"]');
   if (paramLink) paramLink.style.display = isLoggedIn ? 'inline-block' : 'none';
@@ -356,35 +449,41 @@ function initializeAuth() {
     const rememberMe = document.getElementById('rememberMe')?.checked;
     const errorDiv = document.getElementById('loginError');
 
-    errorDiv.textContent = '';
+    if (errorDiv) errorDiv.textContent = '';
     if (!username || !password) {
-      errorDiv.textContent = 'Veuillez remplir tous les champs';
+      if (errorDiv) errorDiv.textContent = 'Veuillez remplir tous les champs';
       return;
     }
 
     try {
-      const res = await fetch(`${API_CONFIG.baseUrl}/auth/login`, {
+      const res = await fetch(`${API_CONFIG.baseUrl}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: API_CONFIG.useCookies ? 'include' : 'same-origin',
-        body: JSON.stringify({ username, password, remember_me: !!rememberMe })
+        body: JSON.stringify({ username, password, rememberMe })
       });
+      
       if (!res.ok) {
-        const err = await res.json().catch(()=>({message:'Erreur de connexion'}));
-        throw new Error(err.message || 'Erreur de connexion');
+        const err = await res.json().catch(()=>({detail:'Erreur de connexion'}));
+        throw new Error(err.detail || err.message || 'Erreur de connexion');
       }
-      const data = await res.json().catch(()=>({}));
+      
+      const data = await res.json();
       accessToken = data?.access_token || null;
       isLoggedIn = true;
       loginModal?.classList.remove('show');
       updateUI(true);
       updateNavMenu();
+      
+      // Recharger les paramètres après connexion
+      fetchCurrentParameters();
+      
     } catch (err) {
-      errorDiv.textContent = err.message || 'Erreur réseau';
+      if (errorDiv) errorDiv.textContent = err.message || 'Erreur réseau';
     }
   });
 
-  // Déconnexion (simple côté front — côté back tu peux aussi exposer /auth/logout)
+  // Déconnexion (simple côté front — côté back tu peux aussi exposer /logout)
   logoutBtn?.addEventListener('click', (e) => {
     e.preventDefault();
     logout();
@@ -396,6 +495,35 @@ function initializeAuth() {
       document.querySelector('.user-menu')?.classList.remove('open');
     }
   });
+}
+
+/* ========================================================================== */
+/*  Vérification de session au démarrage                                      */
+/* ========================================================================== */
+
+/** Vérifie si l'utilisateur est déjà connecté au démarrage */
+async function checkExistingSession() {
+  try {
+    const response = await fetch(`${API_CONFIG.baseUrl}/check_session`, {
+      credentials: API_CONFIG.useCookies ? 'include' : 'same-origin'
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.is_authenticated) {
+        // Essayer de récupérer un nouveau token si possible
+        const refreshed = await refreshAccessToken();
+        if (refreshed) {
+          isLoggedIn = true;
+          updateUI(true);
+          updateNavMenu();
+          fetchCurrentParameters();
+        }
+      }
+    }
+  } catch (e) {
+    console.log('Pas de session existante');
+  }
 }
 
 /* ========================================================================== */
@@ -414,16 +542,18 @@ function initializeDateFilters() {
   }
 }
 
-/** Point d’entrée : branche les listeners et charge les données. */
+/** Point d'entrée : branche les listeners et charge les données. */
 function initializeApp() {
   initializeDateFilters();
   initializeAuth();
   updateNavMenu();
 
-  // Chargements initiaux
+  // Vérifier la session existante
+  checkExistingSession();
+
+  // Chargements initiaux (données publiques)
   fetchRealtimeSensors();
   fetchHistoryData();
-  fetchCurrentParameters();
 
   // Boutons action
   document.getElementById('refreshData')?.addEventListener('click', fetchHistoryData);
@@ -433,7 +563,7 @@ function initializeApp() {
   setInterval(fetchRealtimeSensors, 30000);
 }
 
-// Lance l’app une fois le DOM prêt
+// Lance l'app une fois le DOM prêt
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initializeApp);
 } else {
@@ -443,5 +573,5 @@ if (document.readyState === 'loading') {
 // Filet de sécurité : promesses non gérées
 window.addEventListener('unhandledrejection', (e) => {
   console.error('Unhandled promise rejection:', e.reason);
-  showError('Une erreur inattendue s’est produite');
+  showError('Une erreur inattendue s\'est produite');
 });
