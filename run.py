@@ -4,12 +4,19 @@ from routers import auth, system
 from core.config import settings
 from core.logging import logger
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Request
+from fastapi.responses import JSONResponse
 
 docs_kwargs = {}
 if not settings.enable_docs:
     docs_kwargs = {"docs_url": None, "redoc_url": None, "openapi_url": None}
 
 app = FastAPI(title=settings.app_name, **docs_kwargs)
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Global exception: {exc}", exc_info=True)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 # Middleware CORS
 app.add_middleware(

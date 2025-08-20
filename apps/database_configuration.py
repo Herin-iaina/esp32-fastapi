@@ -17,6 +17,7 @@ from pydantic import Field, conint, constr
 from sqlalchemy import Time  # Ajoute cette importation
 
 from dotenv import load_dotenv
+import bcrypt
 
 # Chargement des variables d'environnement
 load_dotenv(dotenv_path=os.getenv("ENV_PATH", ".env"))
@@ -210,6 +211,12 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Erreur lors de la création des tables: {e}")
             raise
+
+    def hash_password_bcrypt(self, password: str) -> str:
+        """Hash un mot de passe avec bcrypt"""
+        salt = bcrypt.gensalt()
+        hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+        return hashed.decode('utf-8')
     
     def _insert_default_data(self):
         """Insérer les données par défaut"""
@@ -223,7 +230,7 @@ class DatabaseManager:
                     admin = LoginModel(
                         mail_id='admin@example.com',
                         user_name='admin',
-                        password='admin',  # En production, hasher le mot de passe
+                        password= self.hash_password_bcrypt("admin"),  # Mot de passe sécurisé avec bcrypt
                         status=True
                     )
                     session.add(admin)
