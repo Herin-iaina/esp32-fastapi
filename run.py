@@ -6,6 +6,8 @@ from core.logging import logger
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
 docs_kwargs = {}
 if not settings.enable_docs:
@@ -32,7 +34,8 @@ app.mount("/static", StaticFiles(directory=settings.static_dir), name="static")
 templates = Jinja2Templates(directory=settings.templates_dir)
 
 # Include routers
-app.include_router(auth.router, prefix="/auth", tags=["auth"])
+app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
+app.include_router(auth.router, prefix="/register", tags=["register"])
 app.include_router(system.router, tags=["system"])
 
 if __name__ == "__main__":
