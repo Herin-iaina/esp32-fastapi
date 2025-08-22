@@ -1,141 +1,164 @@
-from fastapi import APIRouter, Depends, HTTPException
-from typing import Literal, Annotated
-from pydantic import BaseModel
+import json
+import datetime
+from datetime import timezone
+from typing import Dict, Any
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, ValidationError
+
 from core.config import settings
-from typing import Optional
 from core.logging import logger
-from models.sensor import (
-    add_data , validate_temperature, validate_humidity)
+from models.sensor import ValuesRequest, process_sensor_data
+
+# Configuration du routeur
+router = APIRouter(prefix="/sensor", tags=["Capteurs"])
 
 
+class APIResponse(BaseModel):
+    """Modèle de réponse standardisé"""
+    message: str
+    data: Dict[str, Any] = {}
+    success: bool = True
 
-@app.post("/values", response_model=APIResponse, tags=["Données"])
-async def post_values(request: Request, api_key: str = Depends(get_api_key)):
-    """Enregistre les données des capteurs"""
+
+def get_api_key(api_key: str) -> str:
+    """
+    Valide la clé API (fonction à adapter selon votre système d'authentification)
+    """
+    # À implémenter selon votre logique d'authentification
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Clé API manquante"
+        )
+    return api_key
+
+
+@router.post("/values", response_model=APIResponse, tags=["Données"])
+async def post_values(
+    request: Request, 
+    api_key: str = Depends(get_api_key)
+) -> APIResponse:
+    """
+    Enregistre les données des capteurs avec validation complète
+    
+    Expected JSON format:
+    {
+        "average_temperature": 22.5,
+        "average_humidity": 45.0,
+        "fan_status": true,
+        "humidifier_status": false,
+        "numFailedSensors": 0,
+        "sensor1": {"temperature": 22.1, "humidity": 44.5},
+        "sensor2": {"temperature": 22.9, "humidity": 45.5},
+        ...
+    }
+    """
     try:
-        data = await request.json()
-        
-        # Validation des données principales
-        required_fields = ['average_temperature', 'average_humidity', 'fan_status', 'humidifier_status', 'numFailedSensors']
-        missing_fields = [field for field in required_fields if field not in data]
-        
-        if missing_fields:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Champs requis manquants: {', '.join(missing_fields)}"
-            )
-        
-        # Validation des valeurs
-        avg_temp = data.get('average_temperature')
-        avg_hum = data.get('average_humidity')
-        
-        if not validate_temperature(avg_temp):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Valeur de température invalide: {avg_temp}"
-            )
-            
-        if not validate_humidity(avg_hum):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Valeur d'humidité invalide: {avg_hum}"
-            )
-        
-        # Extraction et validation des valeurs de base
+        # Parse du JSON
         try:
-            average_temperature = float(avg_temp)
-            average_humidity = float(avg_hum)
-            fan_status = str(data.get('fan_status'))
-            humidifier_status = str(data.get('humidifier_status'))
-            num_failed_sensors = int(data.get('numFailedSensors', 0))
-        except (ValueError, TypeError) as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Erreur de conversion des données: {e}"
-            )
-        
-        date_serveur = datetime.datetime.now(timezone.utc)
-        results = []
-        sensor_count = 0
-        
-        # Traitement des données des capteurs
-        for sensor_name, sensor_data in data.items():
-            if sensor_name.startswith('sensor'):
-                sensor_count += 1
-                try:
-                    if not isinstance(sensor_data, dict):
-                        raise ValueError("Les données du capteur doivent être un objet")
-                    
-                    if 'humidity' not in sensor_data or 'temperature' not in sensor_data:
-                        raise ValueError("Données de capteur incomplètes (humidity/temperature manquants)")
-                    
-                    humidity = float(sensor_data['humidity'])
-                    temperature = float(sensor_data['temperature'])
-                    
-                    # Validation des valeurs individuelles
-                    if not (0 <= humidity <= 100):
-                        raise ValueError(f"L'humidité doit être entre 0 et 100, reçu: {humidity}")
-                    if not (-50 <= temperature <= 100):
-                        raise ValueError(f"La température doit être entre -50 et 100, reçu: {temperature}")
-                    
-                    data_to_insert = {
-                        'sensor': sensor_name,
-                        'temperature': temperature,
-                        'humidity': humidity,
-                        'average_humidity': average_humidity,
-                        'average_temperature': average_temperature,
-                        'fan_status': fan_status,
-                        'humidifier_status': humidifier_status,
-                        'numfailedsensors': num_failed_sensors,
-                        'date_serveur': date_serveur
-                    }
-                    
-                    result = post_temp_humidity.add_data(data_to_insert)
-                    results.append(result)
-                    
-                except (KeyError, ValueError, TypeError) as e:
-                    logger.error(f"Erreur données capteur {sensor_name}: {e}")
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Données invalides pour {sensor_name}: {str(e)}"
-                    )
-        
-        if sensor_count == 0:
+            raw_data = await request.json()
+        except json.JSONDecodeError as e:
+            logger.error(f"Erreur de parsing JSON: {e}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Aucune donnée de capteur trouvée (aucun champ commençant par 'sensor')"
+                detail="Format JSON invalide"
             )
         
-        successful_inserts = sum(1 for result in results if result)
+        # Séparation des données principales et des capteurs
+        sensor_data = {}
+        main_data = {}
         
-        if successful_inserts == sensor_count:
-            logger.info(f"Données enregistrées avec succès: {sensor_count} capteurs")
+        for key, value in raw_data.items():
+            if key.startswith('sensor'):
+                sensor_data[key] = value
+            else:
+                main_data[key] = value
+        
+        # Ajout des données de capteurs au modèle principal
+        main_data['sensors'] = sensor_data
+        
+        # Validation avec Pydantic
+        try:
+            validated_data = ValuesRequest(**main_data)
+        except ValidationError as e:
+            logger.error(f"Erreur de validation Pydantic: {e}")
+            error_details = []
+            for error in e.errors():
+                field = " -> ".join(str(x) for x in error['loc'])
+                error_details.append(f"{field}: {error['msg']}")
+            
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Données invalides: {'; '.join(error_details)}"
+            )
+        
+        # Traitement et insertion des données
+        logger.info(f"Traitement de {len(validated_data.sensors)} capteurs")
+        results = process_sensor_data(validated_data)
+        
+        # Analyse des résultats
+        successful_inserts = sum(results)
+        total_sensors = len(results)
+        
+        if successful_inserts == 0:
+            logger.error("Aucune donnée n'a pu être insérée")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Échec complet de l'enregistrement des données"
+            )
+        
+        elif successful_inserts == total_sensors:
+            logger.info(f"Toutes les données enregistrées avec succès: {total_sensors} capteurs")
             return APIResponse(
-                message=f"Données reçues et enregistrées avec succès ({sensor_count} capteurs)",
+                message=f"Données reçues et enregistrées avec succès ({total_sensors} capteurs)",
                 data={
-                    "sensors_processed": sensor_count,
+                    "sensors_processed": total_sensors,
                     "sensors_successful": successful_inserts,
-                    "failed_sensors": num_failed_sensors
+                    "sensors_failed": total_sensors - successful_inserts,
+                    "failed_sensors_reported": validated_data.numFailedSensors,
+                    "timestamp": datetime.datetime.now(timezone.utc).isoformat()
                 }
             )
+        
         else:
-            logger.error(f"Échec partiel: {successful_inserts}/{sensor_count} capteurs enregistrés")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Échec partiel de l'enregistrement: {successful_inserts}/{sensor_count} capteurs enregistrés"
+            # Succès partiel
+            logger.warning(f"Succès partiel: {successful_inserts}/{total_sensors} capteurs enregistrés")
+            return APIResponse(
+                message=f"Enregistrement partiel: {successful_inserts}/{total_sensors} capteurs",
+                data={
+                    "sensors_processed": total_sensors,
+                    "sensors_successful": successful_inserts,
+                    "sensors_failed": total_sensors - successful_inserts,
+                    "failed_sensors_reported": validated_data.numFailedSensors,
+                    "timestamp": datetime.datetime.now(timezone.utc).isoformat()
+                },
+                success=False
             )
-            
+    
     except HTTPException:
+        # Re-raise des HTTPException pour préserver le code de statut
         raise
-    except json.JSONDecodeError as e:
-        logger.error(f"Erreur de parsing JSON: {e}")
-        raise HTTPException(
-            status_code=400,
-            detail="Format JSON invalide"
-        )
+    
     except Exception as e:
         logger.error(f"Erreur inattendue dans post_values: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erreur serveur interne"
         )
+
+
+@router.get("/health", tags=["Health"])
+async def health_check():
+    """Point de contrôle de santé du service capteurs"""
+    return APIResponse(
+        message="Service capteurs opérationnel",
+        data={
+            "timestamp": datetime.datetime.now(timezone.utc).isoformat(),
+            "service": "sensor_service"
+        }
+    )
+
+
+# Export du routeur pour l'inclusion dans l'application principale
+__all__ = ["router"]
