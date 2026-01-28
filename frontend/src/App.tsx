@@ -1,14 +1,16 @@
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import './App.css'
 import Dashboard from './pages/Dashboard'
 import Settings from './pages/Settings'
 import { useSensorStore } from './store/sensorStore'
+import { useAppStore } from './store/appStore'
 import { AlertCircle } from 'lucide-react'
 
 function App() {
   const [currentPage, setCurrentPage] = useState<'dashboard' | 'settings'>('dashboard')
   const [isOnline, setIsOnline] = useState(navigator.onLine)
   const { error } = useSensorStore()
+  const { isDarkMode } = useAppStore()
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true)
@@ -22,6 +24,15 @@ function App() {
       window.removeEventListener('offline', handleOffline)
     }
   }, [])
+
+  // Appliquer le dark mode globalement
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+    }
+  }, [isDarkMode])
 
   return (
     <div className="app-container">

@@ -10,6 +10,7 @@ from core.config import settings
 from core.logging import logger
 from models.sensor import ValuesRequest, process_sensor_data
 from core.mock_data import generate_mock_sensor_data, generate_mock_sensor_history
+from apps.database_configuration import db_manager, DataTempModel
 
 # Configuration du routeur
 router = APIRouter(prefix="/sensor", tags=["Capteurs"])
@@ -195,10 +196,67 @@ async def get_values(mock: bool = Query(False, description="Utiliser les donnée
             )
         else:
             # Récupérer les vraies données de la base
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Pas de données disponibles - mode production nécessite une base de données"
-            )
+            if not db_manager.connected:
+                logger.warning("Base de données non connectée - utiliser mock data")
+                mock_data = generate_mock_sensor_data()
+                return APIResponse(
+                    message="Données fictives (base non disponible)",
+                    data={
+                        "average_temperature": mock_data.average_temperature,
+                        "average_humidity": mock_data.average_humidity,
+                        "fan_status": mock_data.fan_status,
+                        "humidifier_status": mock_data.humidifier_status,
+                        "numFailedSensors": mock_data.numFailedSensors,
+                        "sensors": {
+                            name: {
+                                "temperature": sensor.temperature,
+                                "humidity": sensor.humidity
+                            }
+                            for name, sensor in mock_data.sensors.items()
+                        },
+                        "timestamp": datetime.datetime.now(timezone.utc).isoformat(),
+                        "is_mock": True
+                    }
+                )
+            
+            try:
+                # Récupérer la dernière ligne de data_temp
+                session = db_manager.SessionLocal()
+                latest = session.query(DataTempModel).order_by(DataTempModel.id.desc()).first()
+                session.close()
+                
+                if not latest:
+                    logger.warning("Aucune données dans data_temp")
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Pas de données disponibles dans la base"
+                    )
+                
+                logger.info(f"Retour des données réelles de la base (id={latest.id})")
+                return APIResponse(
+                    message="Données réelles (production)",
+                    data={
+                        "average_temperature": latest.average_temperature or 0,
+                        "average_humidity": latest.average_humidity or 0,
+                        "fan_status": latest.fan_status or False,
+                        "humidifier_status": latest.humidifier_status or False,
+                        "numFailedSensors": latest.numfailedsensors or 0,
+                        "sensors": {
+                            latest.sensor: {
+                                "temperature": latest.temperature,
+                                "humidity": latest.humidity
+                            }
+                        },
+                        "timestamp": latest.date_serveur.isoformat() if latest.date_serveur else datetime.datetime.now(timezone.utc).isoformat(),
+                        "is_mock": False
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Erreur lors de la lecture de la base: {e}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=f"Erreur base de données: {str(e)}"
+                )
     except HTTPException:
         raise
     except Exception as e:

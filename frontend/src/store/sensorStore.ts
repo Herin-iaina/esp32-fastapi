@@ -27,7 +27,7 @@ interface SensorStore {
   setError: (error: string | null) => void
 }
 
-const API_BASE = import.meta.env.VITE_API_URL || '/api'
+const API_BASE = '/api'
 
 export const useSensorStore = create<SensorStore>((set) => ({
   data: null,

@@ -36,6 +36,8 @@ DB_CONFIG = {
 # Configuration via variables d'environnement
 class DatabaseSettings(BaseSettings):
     """Configuration de la base de données via variables d'environnement"""
+    # Vérifier d'abord APP_DATABASE_URL (Docker), sinon utiliser les paramètres individuels
+    database_url: Optional[str] = Field(default=None, alias="APP_DATABASE_URL", description="URL de connexion complète")
     db_host: constr(strip_whitespace=True, min_length=1) = Field(default="127.0.0.1", description="Adresse de la base")
     db_port: conint(ge=1, le=65535) = Field(default=5432, description="Port de la base")
     db_user: constr(strip_whitespace=True, min_length=1) = Field(default="ted", description="Utilisateur")
@@ -47,7 +49,8 @@ class DatabaseSettings(BaseSettings):
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
-        "extra": "allow" # Permettre les variables non définies dans le modèle
+        "extra": "allow", # Permettre les variables non définies dans le modèle
+        "populate_by_name": True  # Accepter les alias
     }
 
 # Instance des paramètres
@@ -117,6 +120,7 @@ class DatabaseManager:
         self.engine = None
         self.SessionLocal = None
         self.connected = False
+        self.database_url = db_settings.database_url  # Ajouter l'URL de la base
         try:
             self._initialize_database()
             self.connected = True
@@ -125,8 +129,12 @@ class DatabaseManager:
             logger.warning("Fonctionnement en mode développement (mock data)")
             self.connected = False
     
+    
     def _get_database_url(self) -> str:
         """Construire l'URL de connexion à la base de données"""
+        # Utiliser APP_DATABASE_URL si définie (Docker), sinon construire à partir des paramètres
+        if self.database_url:
+            return self.database_url
         return (
             f"postgresql://{db_settings.db_user}:{db_settings.db_password}"
             f"@{db_settings.db_host}:{db_settings.db_port}/{db_settings.db_name}"

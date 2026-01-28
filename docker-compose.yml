@@ -1,5 +1,5 @@
 services:
-  # Backend FastAPI
+  # Backend FastAPI (Production - Serve Frontend)
   backend:
     build:
       context: .
@@ -9,38 +9,35 @@ services:
       - "8000:8000"
     environment:
       - APP_DATABASE_URL=postgresql://user:password@db:5432/smartelia_db
-      - APP_ENVIRONMENT=dev
+      - APP_ENVIRONMENT=prod
       - PYTHONUNBUFFERED=1
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     volumes:
       - ./apps:/app/apps
       - ./routers:/app/routers
       - ./models:/app/models
       - ./core:/app/core
       - ./logs:/app/logs
+      - ./frontend/dist:/app/frontend/dist:ro
     networks:
       - smartelia-network
     command: uvicorn run:app --host 0.0.0.0 --port 8000 --reload
-
-  # Frontend React + Vite
+  
+  # Frontend static (Production) - sert le build via nginx
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    image: nginx:alpine
     container_name: esp32-frontend
     ports:
-      - "5173:5173"
+      - "5173:80"
     depends_on:
       - backend
     volumes:
-      - ./frontend/src:/app/src
-      - ./frontend/index.html:/app/index.html
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - smartelia-network
-    environment:
-      - VITE_API_URL=http://backend:8000/api
-    command: npm run dev
 
   # PostgreSQL Database
   db:

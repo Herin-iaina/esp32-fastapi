@@ -1,16 +1,18 @@
-# 🌡️ Projet ESP32 - Système de Monitoring des Capteurs v2.0
+# 🐔 Système d'Incubation - Monitoring des Capteurs v2.0
 
-Système de surveillance en temps réel pour capteurs ESP32 avec architecture **frontend et backend séparés**. Une application moderne, élégante et performante.
+Système de surveillance en temps réel pour incubateurs avec capteurs ESP32. Architecture **frontend et backend séparés** avec authentification, persistance en base de données, et interface responsive.
 
 ## ✨ Caractéristiques
 
 - ✅ **Frontend moderne** : React 18 + TypeScript + Vite
-- ✅ **Graphiques élégants** : Recharts (pas de Chart.js lourd)
+- ✅ **Authentification JWT** : Login sécurisé avec tokens
+- ✅ **Mode Sombre** : Interface adaptable avec thème
+- ✅ **Paramètres persistants** : Sauvegardés en PostgreSQL
+- ✅ **Graphiques temps réel** : Recharts (temperature & humidité)
 - ✅ **API REST** : FastAPI robuste et performante
-- ✅ **Base de données** : PostgreSQL
+- ✅ **Base de données** : PostgreSQL avec historique
 - ✅ **Containerisé** : Docker & Docker Compose
-- ✅ **Responsive** : Design adapté mobile et desktop
-- ✅ **Temps réel** : Données mises à jour automatiquement
+- ✅ **Responsive Design** : Mobile & Desktop
 
 ## 📋 Architecture
 
@@ -39,22 +41,22 @@ Système de surveillance en temps réel pour capteurs ESP32 avec architecture **
 
 ## 🚀 Démarrage Rapide
 
-### Avec Docker (Recommandé)
+### Avec Docker (Recommandé) ✨
 
 ```bash
-# Rendre les scripts exécutables
-chmod +x start-dev.sh stop-dev.sh
+# Démarrer tous les services (Backend + Frontend + Database)
+docker compose up -d
 
-# Démarrer tous les services
-./start-dev.sh
+# Vérifier l'état
+docker compose ps
 ```
 
 Accès:
-- **Frontend** : http://localhost:5173
-- **Backend** : http://localhost:8000
-- **Docs API** : http://localhost:8000/docs
+- **Application** : http://localhost:8000
+- **API Docs** : http://localhost:8000/docs
+- **Credentials** : admin / test123456
 
-### Installation Locale
+### Installation Locale (développement)
 
 #### Backend
 
@@ -65,12 +67,12 @@ pip install -r requirements.txt
 python run.py
 ```
 
-#### Frontend
+#### Frontend (développement)
 
 ```bash
 cd frontend
 npm install
-npm run dev
+npm run dev  # http://localhost:5173
 ```
 
 ## 📁 Structure du Projet
@@ -131,24 +133,67 @@ Types de graphiques inclus:
 - 🎯 Graphiques en radar (Analyse des capteurs)
 - 📈 Extensible pour ajouter LineCharts, AreaCharts, etc.
 
-## 📡 API Endpoints
+## � Authentification & Sécurité
 
-### Health Check
-```http
-GET /api/health
-```
-
-### Authentification
-```http
+### Login
+```bash
 POST /api/auth/login
-POST /api/auth/register
+{
+  "username": "admin",
+  "password": "test123456"
+}
 ```
 
-### Capteurs
-```http
-POST /api/sensor/values         # Envoyer les données
-GET /api/sensor/history         # Historique
+Réponse:
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer",
+  "username": "admin",
+  "user_id": 1
+}
 ```
+
+### Protection des paramètres
+- ✅ Token JWT requis pour modifier les paramètres
+- ✅ Roles utilisateurs supportés (future)
+- ✅ Mots de passe hachés avec bcrypt
+
+## 🐔 Paramètres d'Incubation
+
+Le système gère les paramètres spécifiques pour chaque espèce:
+
+### Poule
+- **Durée**: 21 jours
+- **Température**: 37.5°C (±0.2°C)
+- **Humidité**: 40-50% (J1-J18), 70-75% (J19+)
+- **Rotations**: 5+ par jour
+
+### Canard
+- **Durée**: 28 jours
+- **Température**: 37.5°C (±0.2°C)
+- **Humidité**: 40-50% (J1-J25), 75-80% (J26+)
+- **Rotations**: 5+ par jour (arrêt J25)
+
+### Dinde
+- **Durée**: 28 jours
+- **Température**: 37.5°C (±0.2°C)
+- **Humidité**: 40-50% (J1-J20), 70% (J21+)
+- **Rotations**: 5+ par jour
+
+## 📊 Dashboard Temps Réel
+
+### Graphiques Inclus
+- 📈 **Historique Température** (dernières 24h)
+- 💧 **Historique Humidité** (dernières 24h)
+- ⏱️ **Compteur d'éclosion** (jours restants)
+- 🔌 **État des capteurs**
+
+### Mises à jour
+- Chargement automatique toutes les 5 secondes
+- Persistance des données en PostgreSQL
+- Historique conservé (paramétrable)
+
 
 ### Paramètres
 ```http
