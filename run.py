@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from fastapi import FastAPI
-from routers import auth, system, pages
+from routers import auth, system, pages, parameter
 from core.config import settings
 from core.logging import logger
 from fastapi.middleware.cors import CORSMiddleware
@@ -38,6 +38,7 @@ app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(auth.router, prefix="/register", tags=["register"])
 app.include_router(system.router, tags=["system"])
 app.include_router(pages.router, tags=["pages"])
+app.include_router(parameter.router, tags=["parameters"])
 
 if __name__ == "__main__":
     import uvicorn
