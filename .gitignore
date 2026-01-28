@@ -1,35 +1,62 @@
+# Python
+__pycache__/
 *.pyc
 *.pyo
 *.pyd
-*.pyw
-*.pyz
-*.pywz
-*.pyzw
-*.pyzwz
-*.pyzwzw
-*.pyzwzwzw
-*.json
-*.jsonl
-*.jsonl.gz
-*.jsonl.bz2
-*.jsonl.xz
-*.jsonl.zst
-*.jsonl.zstd
-*.jsonl.zstd.gz
-*.jsonl.zstd.bz2
-*.jsonl.zstd.xz
-*.csv
-*.csv.gz
-*.csv.bz2
-*.csv.xz
-*.csv.zst
-*.csv.zstd
-*.csv.zstd.gz
-*.csv.zstd.bz2
-*.csv.zstd.xz
-*.csv.zstd.zst
-*.conf
-*.log
-*.txt
-*.env
+*.egg-info/
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+fastapi/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
 .env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# Database
+postgres_data/
+*.db
+*.sqlite
+
+# Frontend
+node_modules/
+dist/
+.turbo/
+.pnp
+.pnp.js
+
+# Docker
+.dockerignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Old files
+old/
+static/
+templates/
+explication_code/

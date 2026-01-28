@@ -18,10 +18,6 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = False
     rate_limit_requests: int = 100
     rate_limit_window: int = 60
-
-    # Paths
-    static_dir: str = "static"
-    templates_dir: str = "templates"
     
     @field_validator("cors_origins", mode="before")
     @classmethod

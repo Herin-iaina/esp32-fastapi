@@ -1,0 +1,117 @@
+.sensor-card {
+  background: white;
+  border-radius: 12px;
+  padding: 1.5rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  border-top: 4px solid #667eea;
+  transition: all 0.3s ease;
+}
+
+.sensor-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+}
+
+.sensor-card.cold {
+  border-top-color: #3b82f6;
+}
+
+.sensor-card.hot {
+  border-top-color: #ef4444;
+}
+
+.sensor-card.normal {
+  border-top-color: #10b981;
+}
+
+.sensor-card h4 {
+  margin: 0 0 1rem 0;
+  color: #1f2937;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.sensor-values {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.value-block {
+  background: #f9fafb;
+  border-radius: 8px;
+  padding: 1rem;
+  text-align: center;
+  border: 2px solid #e5e7eb;
+  transition: all 0.3s ease;
+}
+
+.value-block.temperature {
+  border-color: #fca5a5;
+}
+
+.value-block.humidity {
+  border-color: #bfdbfe;
+}
+
+.value-block.humidity.dry {
+  background: #fef3c7;
+  border-color: #fcd34d;
+}
+
+.value-block.humidity.wet {
+  background: #dbeafe;
+  border-color: #93c5fd;
+}
+
+.value-block .label {
+  display: block;
+  font-size: 0.875rem;
+  color: #666;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+
+.value-block .value {
+  display: block;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.sensor-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #10b981;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.status-indicator {
+  width: 8px;
+  height: 8px;
+  background: #10b981;
+  border-radius: 50%;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@media (max-width: 480px) {
+  .sensor-card {
+    padding: 1rem;
+  }
+
+  .sensor-values {
+    grid-template-columns: 1fr;
+  }
+}

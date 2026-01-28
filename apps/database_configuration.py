@@ -116,7 +116,14 @@ class DatabaseManager:
     def __init__(self):
         self.engine = None
         self.SessionLocal = None
-        self._initialize_database()
+        self.connected = False
+        try:
+            self._initialize_database()
+            self.connected = True
+        except Exception as e:
+            logger.warning(f"Base de données non disponible: {e}")
+            logger.warning("Fonctionnement en mode développement (mock data)")
+            self.connected = False
     
     def _get_database_url(self) -> str:
         """Construire l'URL de connexion à la base de données"""
@@ -242,8 +249,9 @@ class DatabaseManager:
     
     def get_session(self) -> Session:
         """Obtenir une session de base de données"""
-        if not self.SessionLocal:
-            raise RuntimeError("Base de données non initialisée")
+        if not self.connected or not self.SessionLocal:
+            logger.warning("Base de données non disponible - retour None")
+            return None
         return self.SessionLocal()
     
     @contextmanager

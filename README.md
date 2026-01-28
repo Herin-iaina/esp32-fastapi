@@ -1,34 +1,227 @@
-# Projet ESP32 - Smartelia API
+# 🌡️ Projet ESP32 - Système de Monitoring des Capteurs v2.0
 
-This project is a FastAPI-based application designed to interact with ESP32 devices and manage Smartelia settings. It features a modern, ergonomic web interface and a robust backend.
+Système de surveillance en temps réel pour capteurs ESP32 avec architecture **frontend et backend séparés**. Une application moderne, élégante et performante.
 
-## Structure
+## ✨ Caractéristiques
 
-- **Backend**: FastAPI (Python 3.11)
-- **Frontend**: Jinja2 Templates + Custom CSS (No build step required)
-- **Database**: PostgreSQL
-- **Infrastructure**: Docker & Docker Compose
+- ✅ **Frontend moderne** : React 18 + TypeScript + Vite
+- ✅ **Graphiques élégants** : Recharts (pas de Chart.js lourd)
+- ✅ **API REST** : FastAPI robuste et performante
+- ✅ **Base de données** : PostgreSQL
+- ✅ **Containerisé** : Docker & Docker Compose
+- ✅ **Responsive** : Design adapté mobile et desktop
+- ✅ **Temps réel** : Données mises à jour automatiquement
 
-## Prerequisites
+## 📋 Architecture
 
-- [Docker](https://www.docker.com/) and [Docker Compose](https://docs.docker.com/compose/) installed.
-- OR Python 3.11+ for local development.
+```
+┌─────────────────────────────────────────────────┐
+│          Frontend (React + Vite)                │
+│      http://localhost:5173                      │
+│  - Dashboard interactif                         │
+│  - Graphiques Recharts                          │
+│  - Paramètres système                           │
+└──────────────────┬──────────────────────────────┘
+                   │ API HTTP
+┌──────────────────▼──────────────────────────────┐
+│       Backend (FastAPI)                         │
+│      http://localhost:8000                      │
+│  - REST API complète                            │
+│  - Authentification JWT                         │
+│  - Gestion des capteurs                         │
+└──────────────────┬──────────────────────────────┘
+                   │ SQL
+┌──────────────────▼──────────────────────────────┐
+│       Database (PostgreSQL)                     │
+│      localhost:5432                             │
+└─────────────────────────────────────────────────┘
+```
 
-## Quick Start (Docker)
+## 🚀 Démarrage Rapide
 
-The easiest way to run the project is using Docker.
+### Avec Docker (Recommandé)
 
-1.  **Clone the repository:**
-    ```bash
-    git clone <repository_url>
-    cd projet_esp_32
-    ```
+```bash
+# Rendre les scripts exécutables
+chmod +x start-dev.sh stop-dev.sh
 
-2.  **Configure Environment:**
-    Copy the example environment file:
-    ```bash
-    cp .env.example .env
-    ```
+# Démarrer tous les services
+./start-dev.sh
+```
+
+Accès:
+- **Frontend** : http://localhost:5173
+- **Backend** : http://localhost:8000
+- **Docs API** : http://localhost:8000/docs
+
+### Installation Locale
+
+#### Backend
+
+```bash
+python -m venv venv
+source venv/bin/activate  # macOS/Linux
+pip install -r requirements.txt
+python run.py
+```
+
+#### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+## 📁 Structure du Projet
+
+```
+projet_esp_32/
+├── backend/
+│   ├── apps/                 # Logique métier
+│   ├── routers/              # Routes API
+│   ├── models/               # Models Pydantic & SQLAlchemy
+│   ├── core/                 # Configuration, logging
+│   ├── run.py                # Point d'entrée FastAPI
+│   └── requirements.txt       # Dépendances Python
+│
+├── frontend/                 # Application React
+│   ├── src/
+│   │   ├── components/       # Composants réutilisables
+│   │   ├── pages/            # Pages (Dashboard, Settings)
+│   │   ├── store/            # Zustand store
+│   │   └── App.tsx           # Composant root
+│   ├── package.json
+│   ├── vite.config.ts
+│   └── README.md
+│
+├── docker-compose.yml        # Orchestration des services
+├── start-dev.sh              # Script de démarrage
+└── stop-dev.sh               # Script d'arrêt
+```
+
+## 🛠 Technologies
+
+### Frontend
+- **React 18** - UI library
+- **TypeScript** - Type safety
+- **Vite** - Build tool ultra-rapide
+- **Recharts** - Graphiques interactifs
+- **Zustand** - State management minimaliste
+- **Lucide Icons** - Icônes modernes
+- **CSS3** - Styles modernes (Flexbox, Grid)
+
+### Backend
+- **FastAPI** - Framework web async
+- **SQLAlchemy** - ORM robuste
+- **Pydantic** - Validation de données
+- **PostgreSQL** - Base de données
+- **Python 3.11+** - Langage
+
+## 🎨 Graphiques sans Chart.js
+
+Le projet utilise **Recharts** à la place de Chart.js pour:
+- ✅ Meilleure performance
+- ✅ Composants React natifs
+- ✅ Plus facile à personnaliser
+- ✅ Design moderne par défaut
+
+Types de graphiques inclus:
+- 📊 Graphiques en barres (Température/Humidité)
+- 🎯 Graphiques en radar (Analyse des capteurs)
+- 📈 Extensible pour ajouter LineCharts, AreaCharts, etc.
+
+## 📡 API Endpoints
+
+### Health Check
+```http
+GET /api/health
+```
+
+### Authentification
+```http
+POST /api/auth/login
+POST /api/auth/register
+```
+
+### Capteurs
+```http
+POST /api/sensor/values         # Envoyer les données
+GET /api/sensor/history         # Historique
+```
+
+### Paramètres
+```http
+GET /api/settings
+POST /api/settings              # Mettre à jour
+```
+
+## 🔧 Configuration
+
+Les variables d'environnement principales:
+
+```env
+# Backend
+APP_DATABASE_URL=postgresql://user:password@db:5432/smartelia_db
+APP_ENVIRONMENT=dev
+CORS_ORIGINS=http://localhost:5173
+
+# Frontend
+VITE_API_URL=http://localhost:8000/api
+```
+
+## 📝 Logs & Debugging
+
+```bash
+# Voir tous les logs
+docker-compose logs -f
+
+# Logs d'un service spécifique
+docker-compose logs -f backend
+docker-compose logs -f frontend
+docker-compose logs -f db
+```
+
+## 🐛 Troubleshooting
+
+### Port déjà utilisé
+```bash
+# Changer les ports dans docker-compose.yml
+```
+
+### Base de données non accessible
+```bash
+docker-compose logs db
+# Réinitialiser: docker-compose down -v
+```
+
+### Frontend ne se connecte pas
+- Vérifier CORS dans `run.py`
+- Vérifier l'URL API dans `vite.config.ts`
+
+## 🚀 Déploiement en Production
+
+Pour la production:
+1. Utiliser des images Docker optimisées
+2. Configurer les variables d'environnement
+3. Utiliser un reverse proxy (Nginx)
+4. Activer HTTPS/SSL
+5. Configurer les backups PostgreSQL
+
+## 📖 Ressources
+
+- [FastAPI Documentation](https://fastapi.tiangolo.com/)
+- [React Documentation](https://react.dev/)
+- [Recharts Documentation](https://recharts.org/)
+- [Vite Documentation](https://vitejs.dev/)
+
+## 📄 Licence
+
+MIT
+
+## ✉️ Support
+
+Pour toute question ou problème, veuillez ouvrir une issue sur le repository.
     Edit `.env` if necessary (e.g., to change secrets or database credentials).
 
 3.  **Run with Docker Compose:**

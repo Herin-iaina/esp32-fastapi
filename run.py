@@ -1,44 +1,47 @@
 # -*- coding: utf-8 -*-
-from fastapi import FastAPI
-from routers import auth, system, pages, parameter
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from routers import auth, system, parameter, sensor_values
+
 from core.config import settings
 from core.logging import logger
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi import Request
-from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 
 docs_kwargs = {}
 if not settings.enable_docs:
     docs_kwargs = {"docs_url": None, "redoc_url": None, "openapi_url": None}
 
-app = FastAPI(title=settings.app_name, **docs_kwargs)
+app = FastAPI(
+    title=settings.app_name,
+    description="API REST pour système de surveillance des capteurs ESP32",
+    version="2.0.0",
+    **docs_kwargs
+)
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Global exception: {exc}", exc_info=True)
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
-# Middleware CORS
+# Middleware CORS - Permettre le frontend séparé
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins or [],
+    allow_origins=settings.cors_origins or ["http://localhost:5173", "http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Static & templates
-app.mount("/static", StaticFiles(directory=settings.static_dir), name="static")
-templates = Jinja2Templates(directory=settings.templates_dir)
+# Include routers API
+app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(sensor_values.router, prefix="/api", tags=["Capteurs"])
+app.include_router(system.router, prefix="/api", tags=["Système"])
+app.include_router(parameter.router, prefix="/api", tags=["Paramètres"])
 
-# Include routers
-app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
-app.include_router(auth.router, prefix="/register", tags=["register"])
-app.include_router(system.router, tags=["system"])
-app.include_router(pages.router, tags=["pages"])
-app.include_router(parameter.router, tags=["parameters"])
+@app.get("/api/health", tags=["Health"])
+async def health_check():
+    """Endpoint de vérification de santé"""
+    return {"status": "ok", "version": "2.0.0"}
 
 if __name__ == "__main__":
     import uvicorn

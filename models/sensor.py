@@ -42,10 +42,13 @@ class ValuesRequest(BaseModel):
             if not sensor_name.startswith('sensor'):
                 continue
             
-            if isinstance(sensor_data, dict):
+            # Accepter les instances SensorData déjà validées
+            if isinstance(sensor_data, SensorData):
+                validated_sensors[sensor_name] = sensor_data
+            elif isinstance(sensor_data, dict):
                 validated_sensors[sensor_name] = SensorData(**sensor_data)
             else:
-                raise ValueError(f"Les données du capteur {sensor_name} doivent être un dictionnaire")
+                raise ValueError(f"Les données du capteur {sensor_name} doivent être un dictionnaire ou SensorData")
         
         return validated_sensors
 

@@ -3,12 +3,13 @@ import datetime
 from datetime import timezone
 from typing import Dict, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
 from pydantic import BaseModel, ValidationError
 
 from core.config import settings
 from core.logging import logger
 from models.sensor import ValuesRequest, process_sensor_data
+from core.mock_data import generate_mock_sensor_data, generate_mock_sensor_history
 
 # Configuration du routeur
 router = APIRouter(prefix="/sensor", tags=["Capteurs"])
@@ -158,6 +159,95 @@ async def health_check():
             "service": "sensor_service"
         }
     )
+
+
+@router.get("/values", response_model=APIResponse, tags=["Données"])
+async def get_values(mock: bool = Query(False, description="Utiliser les données fictives")):
+    """
+    Récupère les dernières valeurs des capteurs
+    
+    Parameters:
+    - mock: Utiliser les données fictives pour les tests (true/false)
+    """
+    try:
+        if mock or settings.environment == "dev":
+            # Utiliser les données fictives en développement
+            mock_data = generate_mock_sensor_data()
+            logger.info("Retour des données fictives (mode test)")
+            return APIResponse(
+                message="Données fictives (mode test)",
+                data={
+                    "average_temperature": mock_data.average_temperature,
+                    "average_humidity": mock_data.average_humidity,
+                    "fan_status": mock_data.fan_status,
+                    "humidifier_status": mock_data.humidifier_status,
+                    "numFailedSensors": mock_data.numFailedSensors,
+                    "sensors": {
+                        name: {
+                            "temperature": sensor.temperature,
+                            "humidity": sensor.humidity
+                        }
+                        for name, sensor in mock_data.sensors.items()
+                    },
+                    "timestamp": datetime.datetime.now(timezone.utc).isoformat(),
+                    "is_mock": True
+                }
+            )
+        else:
+            # Récupérer les vraies données de la base
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Pas de données disponibles - mode production nécessite une base de données"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération des valeurs: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erreur serveur interne"
+        )
+
+
+@router.get("/history", response_model=APIResponse, tags=["Historique"])
+async def get_history(
+    hours: int = Query(24, ge=1, le=168, description="Nombre d'heures à récupérer"),
+    mock: bool = Query(False, description="Utiliser les données fictives")
+):
+    """
+    Récupère l'historique des données des capteurs
+    
+    Parameters:
+    - hours: Nombre d'heures d'historique (1-168)
+    - mock: Utiliser les données fictives pour les tests
+    """
+    try:
+        if mock or settings.environment == "dev":
+            history = generate_mock_sensor_history(hours=hours)
+            logger.info(f"Retour de l'historique fictif ({hours} heures, {len(history)} points)")
+            return APIResponse(
+                message=f"Historique fictif ({hours} heures)",
+                data={
+                    "history": history,
+                    "total_points": len(history),
+                    "hours": hours,
+                    "timestamp": datetime.datetime.now(timezone.utc).isoformat(),
+                    "is_mock": True
+                }
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Pas d'historique disponible - mode production nécessite une base de données"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération de l'historique: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erreur serveur interne"
+        )
 
 
 # Export du routeur pour l'inclusion dans l'application principale
