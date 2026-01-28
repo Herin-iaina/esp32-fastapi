@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from fastapi import FastAPI
-from routers import auth, system
+from routers import auth, system, pages
 from core.config import settings
 from core.logging import logger
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,6 +37,7 @@ templates = Jinja2Templates(directory=settings.templates_dir)
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(auth.router, prefix="/register", tags=["register"])
 app.include_router(system.router, tags=["system"])
+app.include_router(pages.router, tags=["pages"])
 
 if __name__ == "__main__":
     import uvicorn

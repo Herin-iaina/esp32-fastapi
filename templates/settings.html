@@ -1,0 +1,39 @@
+{% extends "layout.html" %}
+
+{% block title %}Settings - Smartelia{% endblock %}
+{% block header_title %}Settings{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h3>Application Configuration</h3>
+    <form action="/settings/save" method="POST" class="mt-4">
+        <div class="form-group">
+            <label for="app_name">Application Name</label>
+            <input type="text" id="app_name" name="app_name" value="{{ settings.app_name }}"
+                placeholder="Enter App Name">
+        </div>
+
+        <div class="grid">
+            <div class="form-group">
+                <label for="refresh_rate">Refresh Rate (seconds)</label>
+                <input type="number" id="refresh_rate" name="refresh_rate" value="30">
+            </div>
+            <div class="form-group">
+                <label for="theme_mode">Theme Mode</label>
+                <select id="theme_mode" name="theme_mode">
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                    <option value="system">System</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label for="api_key">API Key</label>
+            <input type="password" id="api_key" name="api_key" value="****************">
+        </div>
+
+        <button type="submit">Save Changes</button>
+    </form>
+</div>
+{% endblock %}

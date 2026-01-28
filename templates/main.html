@@ -1,38 +1,55 @@
-<!-- HEAD amélioré -->
-<head>
-  <meta charset="UTF-8">
-  <title>Monitoring Capteurs</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link href="/static/style.css" rel="stylesheet">
-  <link rel="stylesheet" href="/static/bootstrap-icons/font/bootstrap-icons.css">
-  <link rel="stylesheet" href="/static/parameter.css">
-  <!-- Sécurité (compléter côté serveur idéalement via en-têtes) -->
-  <meta http-equiv="X-Content-Type-Options" content="nosniff">
-  <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
-</head>
+{% extends "layout.html" %}
 
-...
+{% block title %}Dashboard - Smartelia{% endblock %}
+{% block header_title %}Dashboard{% endblock %}
 
-<!-- Modal de connexion accessible -->
-<div id="loginModal" class="modal-bg" role="dialog" aria-modal="true" aria-labelledby="loginTitle" aria-describedby="loginDesc">
-  <div class="modal" tabindex="-1">
-    <button class="close-btn" id="closeLogin" type="button" aria-label="Fermer">&times;</button>
-    <h2 id="loginTitle">Connexion</h2>
-    <p id="loginDesc" class="sr-only">Entrez vos identifiants pour accéder aux paramètres.</p>
-    <div id="loginError" class="error-msg" aria-live="polite"></div>
-    <form id="loginForm" autocomplete="on" novalidate>
-      <label class="sr-only" for="loginUsername">Nom d'utilisateur</label>
-      <input type="text" id="loginUsername" placeholder="Nom d'utilisateur" required autocomplete="username">
-      <label class="sr-only" for="loginPassword">Mot de passe</label>
-      <input type="password" id="loginPassword" placeholder="Mot de passe" required autocomplete="current-password">
-      <label>
-        <input type="checkbox" id="rememberMe"> Se souvenir de moi
-      </label>
-      <button type="submit" class="primary-btn">Se connecter</button>
-    </form>
+{% block content %}
+<div class="grid">
+  <div class="card text-center">
+    <h3><i class="bi bi-cpu text-primary"></i> CPU Usage</h3>
+    <h1 class="mt-4">42%</h1>
+    <p class="text-muted">Normal load</p>
+  </div>
+
+  <div class="card text-center">
+    <h3><i class="bi bi-thermometer-half text-danger"></i> Temperature</h3>
+    <h1 class="mt-4">56°C</h1>
+    <p class="text-muted">Within limits</p>
+  </div>
+
+  <div class="card text-center">
+    <h3><i class="bi bi-hdd-network text-success"></i> Uptime</h3>
+    <h1 class="mt-4">12d 4h</h1>
+    <p class="text-muted">Stable</p>
   </div>
 </div>
 
-<!-- Scripts en defer pour éviter le blocage du rendu -->
-<script src="/static/chart.min.js" defer></script>
-<script src="/static/app.js" defer></script>
+<div class="card mt-4">
+  <h3><i class="bi bi-graph-up"></i> Performance History</h3>
+  <div style="height: 300px; width: 100%;">
+    <canvas id="performanceChart"></canvas>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const ctx = document.getElementById('performanceChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: ['12:00', '12:05', '12:10', '12:15', '12:20', '12:25'],
+      datasets: [{
+        label: 'CPU Load',
+        data: [45, 42, 48, 40, 38, 42],
+        borderColor: '#4a90e2',
+        tension: 0.4
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false
+    }
+  });
+</script>
+{% endblock %}
