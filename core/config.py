@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     rate_limit_requests: int = 100
     rate_limit_window: int = 60
     
+    # Admin User Configuration
+    admin_username: str | None = None
+    admin_password: str | None = None
+    
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, v):

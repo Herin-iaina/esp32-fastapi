@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 from fastapi import FastAPI, Request
+from contextlib import asynccontextmanager
+from models.login import create_user
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -13,10 +15,20 @@ docs_kwargs = {}
 if not settings.enable_docs:
     docs_kwargs = {"docs_url": None, "redoc_url": None, "openapi_url": None}
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    if settings.admin_username and settings.admin_password:
+        logger.info(f"Checking for admin user: {settings.admin_username}")
+        create_user(settings.admin_username, settings.admin_password)
+    
+    yield
+
 app = FastAPI(
     title=settings.app_name,
     description="API REST pour système de surveillance des capteurs ESP32",
     version="2.0.0",
+    lifespan=lifespan,
     **docs_kwargs
 )
 
