@@ -146,63 +146,76 @@ bool sendDataToServer(const String& jsonPayload) {
   return httpCode > 0;
 }
 
-bool getCommandsFromServer() {
+bool getAutomationStatus() {
   if (WiFi.status() != WL_CONNECTED) {
     return false;
   }
 
   HTTPClient http;
-  String url = buildServerUrl("/sensor/values") + "?api_key=" + String(apiKey);
-  http.begin(url);
-
+  http.begin(buildServerUrl("/sensor/automation/status"));
   int httpCode = http.GET();
 
-  if (httpCode == 200 || httpCode == 202) {
+  if (httpCode == 200) {
     String response = http.getString();
-    Serial.println("Commandes recues: " + response);
+    Serial.println("Status recu: " + response);
 
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<256> doc;
     DeserializationError error = deserializeJson(doc, response);
 
     if (!error) {
-      // Motor control
-      const char* motorStatus = doc["Motor"] | "OFF";
-      if (strcmp(motorStatus, "ON") == 0) {
-        stepper.moveTo(200);
-        stepper.setSpeed(100);
-        stepper.runToPosition();
-      } else {
-        stepper.setSpeed(0);
-        stepper.setCurrentPosition(0);
-      }
+      // Fan control (true si temperature < seuil)
+      bool fanStatus = doc["fan"] | false;
+      digitalWrite(FAN_PIN, fanStatus ? HIGH : LOW);
+      fanOn = fanStatus;
 
-      // Fan control
-      const char* fanStatus = doc["FAN"] | "OFF";
-      if (strcmp(fanStatus, "ON") == 0) {
-        digitalWrite(FAN_PIN, HIGH);
-        fanOn = true;
-      } else {
-        digitalWrite(FAN_PIN, LOW);
-        fanOn = false;
-      }
-
-      // Humidifier control
-      const char* humidStatus = doc["Humidity"] | "OFF";
-      if (strcmp(humidStatus, "ON") == 0) {
-        digitalWrite(HUMIDIFIER_PIN, HIGH);
-        humidifierOn = true;
-      } else {
-        digitalWrite(HUMIDIFIER_PIN, LOW);
-        humidifierOn = false;
-      }
+      // Humidifier control (true si humidite < seuil)
+      bool humidStatus = doc["humidifier"] | false;
+      digitalWrite(HUMIDIFIER_PIN, humidStatus ? HIGH : LOW);
+      humidifierOn = humidStatus;
 
       http.end();
       return true;
     } else {
-      Serial.println("Erreur parsing JSON");
+      Serial.println("Erreur parsing JSON status");
     }
   } else {
-    Serial.printf("GET /getdata - Erreur: %d\n", httpCode);
+    Serial.printf("GET /automation/status - Erreur: %d\n", httpCode);
+  }
+
+  http.end();
+  return false;
+}
+
+bool getStepperCommand() {
+  if (WiFi.status() != WL_CONNECTED) {
+    return false;
+  }
+
+  HTTPClient http;
+  http.begin(buildServerUrl("/sensor/automation/stepper"));
+  int httpCode = http.GET();
+
+  if (httpCode == 200) {
+    String response = http.getString();
+    Serial.println("Stepper recu: " + response);
+
+    StaticJsonDocument<128> doc;
+    DeserializationError error = deserializeJson(doc, response);
+
+    if (!error) {
+      bool stepperStatus = doc["stepper"] | false;
+      if (stepperStatus) {
+        Serial.println("Rotation stepper activee");
+        stepper.moveTo(stepper.currentPosition() + 200);
+        stepper.setSpeed(100);
+      }
+      http.end();
+      return true;
+    } else {
+      Serial.println("Erreur parsing JSON stepper");
+    }
+  } else {
+    Serial.printf("GET /automation/stepper - Erreur: %d\n", httpCode);
   }
 
   http.end();
@@ -319,10 +332,13 @@ void loop() {
   // Send data to server
   sendDataToServer(jsonPayload);
 
-  // Get commands from server or use backup logic
-  if (!getCommandsFromServer()) {
+  // Get automation commands from server or use backup logic
+  if (!getAutomationStatus()) {
     applyBackupLogic(avgTemperature, avgHumidity);
   }
+
+  // Get stepper command from server
+  getStepperCommand();
 
   // Print status
   printStatus(sensors, 4, avgTemperature, avgHumidity, numFailedSensors);
