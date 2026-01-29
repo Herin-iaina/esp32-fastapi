@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useSensorStore } from '../store/sensorStore'
-import { Filter, ArrowUpDown, ArrowUp, ArrowDown, History, Loader2 } from 'lucide-react'
+import { Filter, ArrowUpDown, ArrowUp, ArrowDown, History, Loader2, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react'
 import './HistoryTable.css'
 
 type SortField = 'timestamp' | 'sensor' | 'temperature' | 'humidity'
@@ -13,11 +13,14 @@ function HistoryTable() {
     const [endDate, setEndDate] = useState('')
     const [sortField, setSortField] = useState<SortField>('timestamp')
     const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
+    const [currentPage, setCurrentPage] = useState(1)
+    const [rowsPerPage, setRowsPerPage] = useState(10)
 
     // Lister les capteurs uniques pour le filtre
     const sensorNames = data ? Object.keys(data.sensors) : []
 
     const handleFilter = () => {
+        setCurrentPage(1)
         fetchHistory(24, false, {
             sensor: sensorFilter || undefined,
             start_date: startDate ? new Date(startDate).toISOString() : undefined,
@@ -26,6 +29,7 @@ function HistoryTable() {
     }
 
     const toggleSort = (field: SortField) => {
+        setCurrentPage(1)
         if (sortField === field) {
             setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
         } else {
@@ -45,6 +49,16 @@ function HistoryTable() {
         }
         return sortOrder === 'asc' ? comparison : -comparison
     })
+
+    // Pagination
+    const totalPages = Math.ceil(sortedHistory.length / rowsPerPage)
+    const startIndex = (currentPage - 1) * rowsPerPage
+    const paginatedHistory = sortedHistory.slice(startIndex, startIndex + rowsPerPage)
+
+    const handleRowsPerPageChange = (value: number) => {
+        setRowsPerPage(value)
+        setCurrentPage(1)
+    }
 
     const SortIcon = ({ field }: { field: SortField }) => {
         if (sortField !== field) return <ArrowUpDown size={14} className="sort-icon-inactive" />
@@ -106,8 +120,8 @@ function HistoryTable() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {sortedHistory.length > 0 ? (
-                                    sortedHistory.map((record, index) => (
+                                {paginatedHistory.length > 0 ? (
+                                    paginatedHistory.map((record, index) => (
                                         <tr key={`${record.timestamp}-${index}`}>
                                             <td>{new Date(record.timestamp).toLocaleString()}</td>
                                             <td>{record.sensor}</td>
@@ -124,9 +138,64 @@ function HistoryTable() {
                         </table>
                     </div>
                     {sortedHistory.length > 0 && (
-                        <div className="history-stats">
-                            <span>{sortedHistory.length} enregistrement{sortedHistory.length > 1 ? 's' : ''}</span>
-                            {loading && <Loader2 size={14} className="spin" />}
+                        <div className="pagination-container">
+                            <div className="pagination-info">
+                                <span>
+                                    {startIndex + 1}-{Math.min(startIndex + rowsPerPage, sortedHistory.length)} sur {sortedHistory.length} enregistrement{sortedHistory.length > 1 ? 's' : ''}
+                                </span>
+                                {loading && <Loader2 size={14} className="spin" />}
+                            </div>
+                            <div className="pagination-controls">
+                                <div className="rows-per-page">
+                                    <label>Lignes :</label>
+                                    <select
+                                        value={rowsPerPage}
+                                        onChange={(e) => handleRowsPerPageChange(Number(e.target.value))}
+                                    >
+                                        <option value={10}>10</option>
+                                        <option value={25}>25</option>
+                                        <option value={50}>50</option>
+                                        <option value={100}>100</option>
+                                    </select>
+                                </div>
+                                <div className="pagination-buttons">
+                                    <button
+                                        className="pagination-btn"
+                                        onClick={() => setCurrentPage(1)}
+                                        disabled={currentPage === 1}
+                                        title="Première page"
+                                    >
+                                        <ChevronsLeft size={18} />
+                                    </button>
+                                    <button
+                                        className="pagination-btn"
+                                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                        disabled={currentPage === 1}
+                                        title="Page précédente"
+                                    >
+                                        <ChevronLeft size={18} />
+                                    </button>
+                                    <span className="page-indicator">
+                                        {currentPage} / {totalPages}
+                                    </span>
+                                    <button
+                                        className="pagination-btn"
+                                        onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                                        disabled={currentPage === totalPages}
+                                        title="Page suivante"
+                                    >
+                                        <ChevronRight size={18} />
+                                    </button>
+                                    <button
+                                        className="pagination-btn"
+                                        onClick={() => setCurrentPage(totalPages)}
+                                        disabled={currentPage === totalPages}
+                                        title="Dernière page"
+                                    >
+                                        <ChevronsRight size={18} />
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     )}
                 </>
