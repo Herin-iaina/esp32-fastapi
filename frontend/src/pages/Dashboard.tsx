@@ -3,18 +3,24 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsive
 import { useSensorStore } from '../store/sensorStore'
 import SensorCard from '../components/SensorCard'
 import StatusCard from '../components/StatusCard'
+import HistoryTable from '../components/HistoryTable'
 import './Dashboard.css'
 import { Thermometer, Droplets, Wind, Zap, TestTube } from 'lucide-react'
 
 function Dashboard() {
-  const { data, loading, fetchData, isMockData } = useSensorStore()
+  const { data, loading, fetchData, fetchHistory, isMockData } = useSensorStore()
 
   useEffect(() => {
-    // Utiliser les données fictives par défaut en développement
-    fetchData(true)
-    const interval = setInterval(() => fetchData(true), 10000) // Refresh every 10s
+    // Ne plus forcer les données fictives
+    const load = () => {
+      fetchData(false)
+      fetchHistory(24, false)
+    }
+
+    load()
+    const interval = setInterval(load, 10000) // Refresh every 10s
     return () => clearInterval(interval)
-  }, [fetchData])
+  }, [fetchData, fetchHistory])
 
   if (loading && !data) {
     return <div className="loading">Chargement des données...</div>
@@ -121,6 +127,8 @@ function Dashboard() {
           ⚠️ {data.numFailedSensors} capteur(s) défaillant(s) détecté(s)
         </section>
       )}
+
+      <HistoryTable />
     </div>
   )
 }

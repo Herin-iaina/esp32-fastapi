@@ -66,7 +66,7 @@ Base = declarative_base()
 # Modèles de données
 class LoginModel(Base):
     """Modèle pour la table login"""
-    __tablename__ = 'login'
+    __tablename__ = 'users'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     mail_id = Column(String(255), nullable=True)
@@ -96,7 +96,12 @@ class ParameterDataModel(Base):
     number_stepper = Column(Integer, default=1)
     espece = Column(String(50), nullable=False)
     timetoclose = Column(Integer, default=28)
+    temp_incubation = Column(Float, default=37.5)
+    humidity_target = Column(Float, default=60.0)
+    rotation_count = Column(Integer, default=5)
+    user_id = Column(Integer, nullable=True)
     created_at = Column(TIMESTAMP, server_default='NOW()')
+    updated_at = Column(DateTime, nullable=True)
 
 class DataTempModel(Base):
     """Modèle pour la table data_temp"""

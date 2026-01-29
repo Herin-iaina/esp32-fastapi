@@ -24,7 +24,7 @@ services:
     networks:
       - smartelia-network
     command: uvicorn run:app --host 0.0.0.0 --port 8000 --reload
-  
+
   # Frontend static (Production) - sert le build via nginx
   frontend:
     image: nginx:alpine
@@ -55,13 +55,14 @@ services:
     networks:
       - smartelia-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user"]
+      test: [ "CMD-SHELL", "pg_isready -U user -d smartelia_db" ]
       interval: 10s
       timeout: 5s
       retries: 5
 
 volumes:
   postgres_data:
+
 
 networks:
   smartelia-network:

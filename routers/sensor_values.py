@@ -171,10 +171,10 @@ async def get_values(mock: bool = Query(False, description="Utiliser les donnée
     - mock: Utiliser les données fictives pour les tests (true/false)
     """
     try:
-        if mock or settings.environment == "dev":
-            # Utiliser les données fictives en développement
+        if mock:
+            # Utiliser les données fictives uniquement si explicitement demandé
             mock_data = generate_mock_sensor_data()
-            logger.info("Retour des données fictives (mode test)")
+            logger.info("Retour des données fictives (mock=true)")
             return APIResponse(
                 message="Données fictives (mode test)",
                 data={
@@ -220,34 +220,65 @@ async def get_values(mock: bool = Query(False, description="Utiliser les donnée
                 )
             
             try:
-                # Récupérer la dernière ligne de data_temp
                 session = db_manager.SessionLocal()
-                latest = session.query(DataTempModel).order_by(DataTempModel.id.desc()).first()
+                # 1. Sélectionner le relevé le plus récent pour CHAQUE capteur unique utile
+                # On utilise une sous-requête pour trouver l'ID max par capteur
+                from sqlalchemy import func
+                subquery = session.query(
+                    DataTempModel.sensor, 
+                    func.max(DataTempModel.id).label('max_id')
+                ).group_by(DataTempModel.sensor).subquery()
+
+                latest_records = session.query(DataTempModel).join(
+                    subquery, 
+                    DataTempModel.id == subquery.c.max_id
+                ).all()
                 session.close()
                 
-                if not latest:
+                if not latest_records:
                     logger.warning("Aucune données dans data_temp")
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="Pas de données disponibles dans la base"
                     )
                 
-                logger.info(f"Retour des données réelles de la base (id={latest.id})")
+                # 2. Aggéger les données de tous les capteurs
+                sensors_dict = {}
+                total_temp = 0
+                total_humid = 0
+                count = len(latest_records)
+                fan_active = False
+                humidifier_active = False
+                failed_count = 0
+                latest_ts = datetime.datetime.min.replace(tzinfo=timezone.utc)
+
+                for rec in latest_records:
+                    sensors_dict[rec.sensor] = {
+                        "temperature": rec.temperature,
+                        "humidity": rec.humidity
+                    }
+                    total_temp += rec.temperature
+                    total_humid += rec.humidity
+                    if rec.fan_status: fan_active = True
+                    if rec.humidifier_status: humidifier_active = True
+                    failed_count = max(failed_count, rec.numfailedsensors or 0)
+                    
+                    # Garder le timestamp le plus récent
+                    rec_ts = rec.date_serveur.replace(tzinfo=timezone.utc) if rec.date_serveur.tzinfo is None else rec.date_serveur
+                    if rec_ts > latest_ts:
+                        latest_ts = rec_ts
+
+                logger.info(f"Retour des données réelles aggrégées ({count} capteurs)")
                 return APIResponse(
-                    message="Données réelles (production)",
+                    message="Données réelles (production aggrégée)",
                     data={
-                        "average_temperature": latest.average_temperature or 0,
-                        "average_humidity": latest.average_humidity or 0,
-                        "fan_status": latest.fan_status or False,
-                        "humidifier_status": latest.humidifier_status or False,
-                        "numFailedSensors": latest.numfailedsensors or 0,
-                        "sensors": {
-                            latest.sensor: {
-                                "temperature": latest.temperature,
-                                "humidity": latest.humidity
-                            }
-                        },
-                        "timestamp": latest.date_serveur.isoformat() if latest.date_serveur else datetime.datetime.now(timezone.utc).isoformat(),
+                        "average_temperature": total_temp / count if count > 0 else 0,
+                        "average_humidity": total_humid / count if count > 0 else 0,
+                        "fan_status": fan_active,
+                        "humidifier_status": humidifier_active,
+                        "numFailedSensors": failed_count,
+                        "sensors": sensors_dict,
+                        "timestamp": latest_ts.isoformat(),
                         "is_mock": False
                     }
                 )
@@ -270,33 +301,73 @@ async def get_values(mock: bool = Query(False, description="Utiliser les donnée
 @router.get("/history", response_model=APIResponse, tags=["Historique"])
 async def get_history(
     hours: int = Query(24, ge=1, le=168, description="Nombre d'heures à récupérer"),
+    sensor: str = Query(None, description="Filtrer par nom de capteur"),
+    start_date: str = Query(None, description="Date de début (ISO format)"),
+    end_date: str = Query(None, description="Date de fin (ISO format)"),
     mock: bool = Query(False, description="Utiliser les données fictives")
 ):
     """
-    Récupère l'historique des données des capteurs
-    
-    Parameters:
-    - hours: Nombre d'heures d'historique (1-168)
-    - mock: Utiliser les données fictives pour les tests
+    Récupère l'historique des données des capteurs avec filtres optionnels
     """
     try:
-        if mock or settings.environment == "dev":
+        if mock:
             history = generate_mock_sensor_history(hours=hours)
-            logger.info(f"Retour de l'historique fictif ({hours} heures, {len(history)} points)")
             return APIResponse(
                 message=f"Historique fictif ({hours} heures)",
                 data={
                     "history": history,
                     "total_points": len(history),
-                    "hours": hours,
-                    "timestamp": datetime.datetime.now(timezone.utc).isoformat(),
                     "is_mock": True
                 }
             )
         else:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Pas d'historique disponible - mode production nécessite une base de données"
+            if not db_manager.connected:
+                raise HTTPException(status_code=503, detail="Base non connectée")
+            
+            session = db_manager.SessionLocal()
+            
+            # Déterminer la plage de dates
+            if start_date:
+                try:
+                    since = datetime.datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                except ValueError:
+                    since = datetime.datetime.now(timezone.utc) - datetime.timedelta(hours=hours)
+            else:
+                since = datetime.datetime.now(timezone.utc) - datetime.timedelta(hours=hours)
+
+            query = session.query(DataTempModel).filter(DataTempModel.date_serveur >= since)
+            
+            if end_date:
+                try:
+                    until = datetime.datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                    query = query.filter(DataTempModel.date_serveur <= until)
+                except ValueError:
+                    pass
+            
+            if sensor:
+                query = query.filter(DataTempModel.sensor == sensor)
+            
+            # Récupérer les données réelles
+            records = query.order_by(DataTempModel.date_serveur.desc()).limit(500).all()
+            session.close()
+            
+            history_data = []
+            for r in records:
+                history_data.append({
+                    "sensor": r.sensor,
+                    "temperature": r.temperature,
+                    "humidity": r.humidity,
+                    "timestamp": r.date_serveur.isoformat() if r.date_serveur else datetime.datetime.now(timezone.utc).isoformat()
+                })
+
+            return APIResponse(
+                message=f"Historique réel ({len(history_data)} points)",
+                data={
+                    "history": history_data,
+                    "total_points": len(history_data),
+                    "hours": hours,
+                    "is_mock": False
+                }
             )
     except HTTPException:
         raise

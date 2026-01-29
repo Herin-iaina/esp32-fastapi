@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import './Settings.css'
-import { Settings as SettingsIcon, Save, LogOut, Moon, Sun } from 'lucide-react'
+import { Settings as SettingsIcon, Save, LogOut, Moon, Sun, User, Lock, LogIn } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
 
 interface IncubatorSettings {
@@ -149,37 +149,60 @@ function Settings() {
 
       {/* Section Authentification */}
       {!isAuthenticated ? (
-        <div className="auth-section">
-          <h3>Connexion</h3>
-          <form onSubmit={handleLogin} className="login-form">
-            <div className="form-group">
-              <label>Nom d'utilisateur</label>
-              <input
-                type="text"
-                placeholder="admin"
-                value={loginData.username}
-                onChange={(e) => setLoginData(prev => ({ ...prev, username: e.target.value }))}
-                disabled={loading}
-              />
+        <div className="login-container">
+          <div className="login-card">
+            <div className="login-header">
+              <div className="login-icon">
+                <User size={32} />
+              </div>
+              <h3>Connexion</h3>
+              <p className="login-subtitle">Connectez-vous pour modifier les paramètres</p>
             </div>
-            <div className="form-group">
-              <label>Mot de passe</label>
-              <input
-                type="password"
-                placeholder="••••••"
-                value={loginData.password}
-                onChange={(e) => setLoginData(prev => ({ ...prev, password: e.target.value }))}
-                disabled={loading}
-              />
-            </div>
-            <button type="submit" className="btn-login" disabled={loading}>
-              {loading ? 'Connexion...' : 'Se connecter'}
-            </button>
-          </form>
+            <form onSubmit={handleLogin} className="login-form">
+              <div className="input-group">
+                <User size={20} className="input-icon" />
+                <input
+                  type="text"
+                  placeholder="Nom d'utilisateur"
+                  value={loginData.username}
+                  onChange={(e) => setLoginData(prev => ({ ...prev, username: e.target.value }))}
+                  disabled={loading}
+                />
+              </div>
+              <div className="input-group">
+                <Lock size={20} className="input-icon" />
+                <input
+                  type="password"
+                  placeholder="Mot de passe"
+                  value={loginData.password}
+                  onChange={(e) => setLoginData(prev => ({ ...prev, password: e.target.value }))}
+                  disabled={loading}
+                />
+              </div>
+              <button type="submit" className="btn-login" disabled={loading}>
+                {loading ? (
+                  <span className="btn-loading">Connexion en cours...</span>
+                ) : (
+                  <>
+                    <LogIn size={20} />
+                    Se connecter
+                  </>
+                )}
+              </button>
+            </form>
+          </div>
         </div>
       ) : (
         <div className="auth-status">
-          <p>Connecté en tant que: <strong>{username}</strong></p>
+          <div className="user-info">
+            <div className="user-avatar">
+              <User size={24} />
+            </div>
+            <div className="user-details">
+              <span className="user-label">Connecté en tant que</span>
+              <strong className="user-name">{username}</strong>
+            </div>
+          </div>
           <button className="btn-logout" onClick={handleLogout}>
             <LogOut size={20} /> Déconnexion
           </button>

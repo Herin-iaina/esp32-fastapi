@@ -49,7 +49,7 @@ test_command "API documentation" "curl -s http://localhost:8000/docs > /dev/null
 echo ""
 echo "🐘 PostgreSQL:"
 test_command "PostgreSQL connection" "docker exec esp32-db psql -U user -d smartelia_db -c 'SELECT 1;' 2>/dev/null"
-test_command "login table exists" "docker exec esp32-db psql -U user -d smartelia_db -c \"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='login')\" 2>/dev/null | grep -q 't'"
+test_command "users table exists" "docker exec esp32-db psql -U user -d smartelia_db -c \"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='users')\" 2>/dev/null | grep -q 't'"
 test_command "parameter_data table exists" "docker exec esp32-db psql -U user -d smartelia_db -c \"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='parameter_data')\" 2>/dev/null | grep -q 't'"
 test_command "data_temp table exists" "docker exec esp32-db psql -U user -d smartelia_db -c \"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='data_temp')\" 2>/dev/null | grep -q 't'"
 

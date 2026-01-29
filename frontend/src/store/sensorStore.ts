@@ -23,7 +23,7 @@ interface SensorStore {
   error: string | null
   isMockData: boolean
   fetchData: (useMock?: boolean) => Promise<void>
-  fetchHistory: (hours?: number, useMock?: boolean) => Promise<void>
+  fetchHistory: (hours?: number, useMock?: boolean, options?: { sensor?: string; start_date?: string; end_date?: string }) => Promise<void>
   setError: (error: string | null) => void
 }
 
@@ -36,20 +36,20 @@ export const useSensorStore = create<SensorStore>((set) => ({
   error: null,
   isMockData: false,
 
-  fetchData: async (useMock = true) => {
+  fetchData: async (useMock = false) => {
     set({ loading: true, error: null })
     try {
       const mockParam = useMock ? '?mock=true' : ''
       const response = await fetch(`${API_BASE}/sensor/values${mockParam}`)
       if (!response.ok) throw new Error('Erreur lors de la récupération des données')
       const jsonData = await response.json()
-      
+
       // Extraire les données du wrapper APIResponse
       const dashboardData = jsonData.data as DashboardData
       const isMock = jsonData.data?.is_mock || false
-      
-      set({ 
-        data: dashboardData, 
+
+      set({
+        data: dashboardData,
         loading: false,
         isMockData: isMock
       })
@@ -59,17 +59,22 @@ export const useSensorStore = create<SensorStore>((set) => ({
     }
   },
 
-  fetchHistory: async (hours = 24, useMock = true) => {
+  fetchHistory: async (hours = 24, useMock = false, options = {}) => {
     set({ loading: true, error: null })
     try {
-      const mockParam = useMock ? '&mock=true' : ''
-      const response = await fetch(`${API_BASE}/sensor/history?hours=${hours}${mockParam}`)
+      let url = `${API_BASE}/sensor/history?hours=${hours}`
+      if (useMock) url += '&mock=true'
+      if (options.sensor) url += `&sensor=${encodeURIComponent(options.sensor)}`
+      if (options.start_date) url += `&start_date=${encodeURIComponent(options.start_date)}`
+      if (options.end_date) url += `&end_date=${encodeURIComponent(options.end_date)}`
+
+      const response = await fetch(url)
       if (!response.ok) throw new Error('Erreur lors de la récupération de l\'historique')
       const jsonData = await response.json()
-      
+
       const historyData = jsonData.data?.history || []
-      set({ 
-        history: historyData, 
+      set({
+        history: historyData,
         loading: false,
         isMockData: jsonData.data?.is_mock || false
       })

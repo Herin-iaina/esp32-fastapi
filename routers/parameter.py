@@ -133,10 +133,17 @@ async def update_parameters(params: ParameterModel):
         session = db_manager.SessionLocal()
         
         # Créer une nouvelle entrée
+        try:
+            # Gérer le format ISO 8601 (ex: 2024-01-29T11:06:06Z)
+            start_date_obj = datetime.fromisoformat(params.start_date.replace('Z', '+00:00'))
+        except ValueError:
+            logger.warning(f"Format de date invalide: {params.start_date}, utilisation de la date actuelle")
+            start_date_obj = datetime.now(timezone.utc)
+
         param_record = ParameterDataModel(
             temperature=params.temperature,
             humidity=params.humidity,
-            start_date=params.start_date,
+            start_date=start_date_obj,
             stat_stepper=params.stat_stepper,
             number_stepper=params.number_stepper,
             espece=params.espece,
