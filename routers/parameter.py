@@ -4,7 +4,7 @@ from typing import Optional
 from datetime import datetime, timezone
 
 from core.logging import logger
-from apps.database_configuration import db_manager, ParameterDataModel
+from apps.database_configuration import db_manager, ParameterDataModel, DataTempModel
 from core.config import settings
 
 router = APIRouter()
@@ -205,3 +205,4 @@ async def get_parameters_history(limit: int = 10):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erreur serveur"
         )
+

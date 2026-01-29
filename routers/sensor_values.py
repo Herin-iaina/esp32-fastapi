@@ -10,7 +10,7 @@ from core.config import settings
 from core.logging import logger
 from models.sensor import ValuesRequest, process_sensor_data
 from core.mock_data import generate_mock_sensor_data, generate_mock_sensor_history
-from apps.database_configuration import db_manager, DataTempModel
+from apps.database_configuration import db_manager, DataTempModel, ParameterDataModel
 
 # Configuration du routeur
 router = APIRouter(prefix="/sensor", tags=["Capteurs"])
@@ -378,6 +378,124 @@ async def get_history(
             detail="Erreur serveur interne"
         )
 
+
+@router.get("/automation/status")
+async def get_automation_status():
+    """
+    Renvoie true/false pour humidificateur et ventilateur.
+    humidifier = true si humidité moyenne < seuil
+    fan = true si température moyenne < seuil
+    """
+    if not db_manager.connected:
+        return {"humidifier": False, "fan": False}
+
+    try:
+        session = db_manager.SessionLocal()
+        from sqlalchemy import func
+
+        # Calculer les moyennes actuelles pour chaque capteur unique (dernier relevé)
+        subquery = session.query(
+            DataTempModel.sensor,
+            func.max(DataTempModel.id).label('max_id')
+        ).group_by(DataTempModel.sensor).subquery()
+
+        latest_records = session.query(DataTempModel).join(
+            subquery,
+            DataTempModel.id == subquery.c.max_id
+        ).all()
+
+        if not latest_records:
+            session.close()
+            return {"humidifier": False, "fan": False}
+
+        total_temp = sum(r.temperature for r in latest_records)
+        total_humid = sum(r.humidity for r in latest_records)
+        count = len(latest_records)
+
+        avg_temp = total_temp / count
+        avg_humid = total_humid / count
+
+        # Récupérer les seuils configurés
+        params = session.query(ParameterDataModel).order_by(ParameterDataModel.id.desc()).first()
+        session.close()
+
+        if not params:
+            return {"humidifier": False, "fan": False}
+
+        # true si moyenne < seuil
+        return {
+            "humidifier": avg_humid < params.humidity,
+            "fan": avg_temp < params.temperature
+        }
+    except Exception as e:
+        logger.error(f"Erreur automation status: {e}")
+        return {"humidifier": False, "fan": False}
+
+
+@router.get("/automation/stepper")
+async def get_automation_stepper():
+    """
+    Renvoie true/false pour la rotation du stepper.
+    - Divise 24h par number_stepper pour obtenir l'intervalle
+    - Retourne true pendant 2 minutes à chaque intervalle
+    - Arrête les rotations après (timetoclose - 10) jours depuis start_date
+    """
+    if not db_manager.connected:
+        return {"stepper": False}
+
+    try:
+        session = db_manager.SessionLocal()
+        params = session.query(ParameterDataModel).order_by(ParameterDataModel.id.desc()).first()
+        session.close()
+
+        if not params:
+            return {"stepper": False}
+
+        number_stepper = params.number_stepper or 1
+        timetoclose = params.timetoclose
+        start_date = params.start_date
+
+        if not start_date:
+            return {"stepper": False}
+
+        # Assurer que start_date a un timezone
+        if start_date.tzinfo is None:
+            start_date = start_date.replace(tzinfo=timezone.utc)
+
+        now = datetime.datetime.now(timezone.utc)
+
+        # Vérifier si on est après (timetoclose - 10) jours - pas de rotation
+        if timetoclose:
+            end_rotation_date = start_date + datetime.timedelta(days=timetoclose - 10)
+            if now >= end_rotation_date:
+                return {"stepper": False}
+
+        # Calculer l'intervalle en heures (24h / number_stepper)
+        interval_hours = 24.0 / number_stepper
+        interval_seconds = interval_hours * 3600
+
+        # Calculer le temps écoulé depuis start_date
+        elapsed = (now - start_date).total_seconds()
+
+        if elapsed < 0:
+            # Pas encore commencé
+            return {"stepper": False}
+
+        # Calculer où on en est dans le cycle
+        # Position dans l'intervalle actuel
+        position_in_interval = elapsed % interval_seconds
+
+        # Retourner true pendant les 2 premières minutes de chaque intervalle
+        two_minutes = 2 * 60  # 120 secondes
+
+        if position_in_interval < two_minutes:
+            return {"stepper": True}
+        else:
+            return {"stepper": False}
+
+    except Exception as e:
+        logger.error(f"Erreur automation stepper: {e}")
+        return {"stepper": False}
 
 # Export du routeur pour l'inclusion dans l'application principale
 __all__ = ["router"]
