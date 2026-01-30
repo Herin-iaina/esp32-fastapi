@@ -3,6 +3,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <AccelStepper.h>
+#include <LiquidCrystal_I2C.h>
 #include "DHT.h"
 
 // ============== CONFIGURATION ==============
@@ -17,6 +18,11 @@
 #define STEPPER_PIN_2   13
 #define FAN_PIN         14
 #define HUMIDIFIER_PIN  15
+
+// LCD I2C (adresse 0x27 par défaut, ajuster si nécessaire)
+#define LCD_ADDRESS     0x27
+#define LCD_COLS        16
+#define LCD_ROWS        2
 
 // WiFi credentials
 const char* ssid = "Airbox-4D56";
@@ -42,6 +48,8 @@ DHT dht_3(DHT_3_PIN_DATA, DHT_SENSOR_TYPE);
 DHT dht_4(DHT_4_PIN_DATA, DHT_SENSOR_TYPE);
 
 AccelStepper stepper(AccelStepper::FULL4WIRE, STEPPER_PIN_1, STEPPER_PIN_2);
+
+LiquidCrystal_I2C lcd(LCD_ADDRESS, LCD_COLS, LCD_ROWS);
 
 // ============== VARIABLES D'ÉTAT ==============
 
@@ -260,6 +268,27 @@ void printStatus(SensorData sensors[], int count, float avgTemp, float avgHumid,
   Serial.println("============================\n");
 }
 
+void displayStatusOnLCD(float avgTemp, float avgHumid) {
+  lcd.clear();
+
+  // Ligne 1: Temperature et Humidite moyennes
+  // Format: "T:37.5C H:45.2%"
+  lcd.setCursor(0, 0);
+  lcd.print("T:");
+  lcd.print(avgTemp, 1);
+  lcd.print("C H:");
+  lcd.print(avgHumid, 1);
+  lcd.print("%");
+
+  // Ligne 2: Etat Fan et Humidificateur
+  // Format: "Fan:ON  Hum:OFF"
+  lcd.setCursor(0, 1);
+  lcd.print("Fan:");
+  lcd.print(fanOn ? "ON " : "OFF");
+  lcd.print(" Hum:");
+  lcd.print(humidifierOn ? "ON" : "OFF");
+}
+
 // ============== SETUP ==============
 
 void setup() {
@@ -286,6 +315,14 @@ void setup() {
   pinMode(HUMIDIFIER_PIN, OUTPUT);
   digitalWrite(FAN_PIN, LOW);
   digitalWrite(HUMIDIFIER_PIN, LOW);
+
+  // Initialize LCD
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("ESP32 Sensor");
+  lcd.setCursor(0, 1);
+  lcd.print("Initializing...");
 
   Serial.println("Initialisation terminee\n");
 }
@@ -342,6 +379,9 @@ void loop() {
 
   // Print status
   printStatus(sensors, 4, avgTemperature, avgHumidity, numFailedSensors);
+
+  // Display on LCD
+  displayStatusOnLCD(avgTemperature, avgHumidity);
 
   // Run stepper if needed
   while (stepper.isRunning()) {
