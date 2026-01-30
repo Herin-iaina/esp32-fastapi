@@ -118,6 +118,248 @@ class DataTempModel(Base):
     humidifier_status = Column(Boolean, default=False)
     numfailedsensors = Column(Integer, default=0)
 
+# --- Nouveaux modèles CRM & IoT ---
+
+class ContactModel(Base):
+    """Table centrale des contacts"""
+    __tablename__ = 'contacts'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(20), unique=True, nullable=False)
+    type = Column(String(20), nullable=False) # 'customer', 'supplier', 'both'
+    name = Column(String(255), nullable=False)
+    legal_name = Column(String(255), nullable=True)
+    email = Column(String(255), unique=True, nullable=True)
+    phone = Column(String(50), nullable=True)
+    mobile = Column(String(50), nullable=True)
+    address_line1 = Column(String(255), nullable=True)
+    address_line2 = Column(String(255), nullable=True)
+    city = Column(String(100), nullable=True)
+    state_province = Column(String(100), nullable=True)
+    postal_code = Column(String(20), nullable=True)
+    country = Column(String(100), default='Madagascar')
+    tax_id = Column(String(50), nullable=True)
+    stat = Column(String(50), nullable=True)
+    notes = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(TIMESTAMP, server_default='NOW()')
+    updated_at = Column(TIMESTAMP, server_default='NOW()', onupdate=func.now())
+    created_by = Column(Integer, nullable=True)
+
+class CustomerModel(Base):
+    """Table spécifique CLIENTS"""
+    __tablename__ = 'customers'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    contact_id = Column(Integer, Column('contact_id', Integer, ForeignKey('contacts.id', ondelete='CASCADE')), nullable=False, unique=True)
+    payment_terms = Column(Integer, default=30)
+    credit_limit = Column(Float, default=0)
+    discount_rate = Column(Float, default=0)
+    customer_category = Column(String(50), nullable=True)
+    priority_level = Column(String(20), default='standard')
+    total_orders = Column(Integer, default=0)
+    total_revenue = Column(Float, default=0)
+    last_order_date = Column(DateTime, nullable=True)
+    average_order_value = Column(Float, default=0)
+    created_at = Column(TIMESTAMP, server_default='NOW()')
+    updated_at = Column(TIMESTAMP, server_default='NOW()', onupdate=func.now())
+
+class SupplierModel(Base):
+    """Table spécifique FOURNISSEURS"""
+    __tablename__ = 'suppliers'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    contact_id = Column(Integer, Column('contact_id', Integer, ForeignKey('contacts.id', ondelete='CASCADE')), nullable=False, unique=True)
+    payment_terms = Column(Integer, default=30)
+    minimum_order_amount = Column(Float, default=0)
+    delivery_time_days = Column(Integer, default=7)
+    supplier_category = Column(String(50), nullable=True)
+    reliability_rating = Column(Float, default=0)
+    total_purchases = Column(Integer, default=0)
+    total_spent = Column(Float, default=0)
+    last_purchase_date = Column(DateTime, nullable=True)
+    average_delivery_time = Column(Float, nullable=True)
+    on_time_delivery_rate = Column(Float, nullable=True)
+    quality_rating = Column(Float, default=0)
+    is_preferred = Column(Boolean, default=False)
+    created_at = Column(TIMESTAMP, server_default='NOW()')
+    updated_at = Column(TIMESTAMP, server_default='NOW()', onupdate=func.now())
+
+class ProductModel(Base):
+    """Catalogue produits"""
+    __tablename__ = 'products'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(50), unique=True, nullable=False)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    category = Column(String(50), nullable=False)
+    unit = Column(String(20), default='unit')
+    purchase_price = Column(Float, default=0)
+    selling_price = Column(Float, default=0)
+    current_stock = Column(Integer, default=0)
+    minimum_stock = Column(Integer, default=0)
+    maximum_stock = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(TIMESTAMP, server_default='NOW()')
+    updated_at = Column(TIMESTAMP, server_default='NOW()', onupdate=func.now())
+
+class CustomerOrderModel(Base):
+    """Commandes clients"""
+    __tablename__ = 'customer_orders'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    order_number = Column(String(50), unique=True, nullable=False)
+    customer_id = Column(Integer, Column('customer_id', Integer, ForeignKey('customers.id')), nullable=False)
+    order_date = Column(DateTime, server_default='NOW()')
+    expected_delivery_date = Column(DateTime, nullable=True)
+    actual_delivery_date = Column(DateTime, nullable=True)
+    status = Column(String(30), default='pending')
+    payment_status = Column(String(30), default='unpaid')
+    subtotal = Column(Float, default=0)
+    discount_amount = Column(Float, default=0)
+    tax_amount = Column(Float, default=0)
+    total_amount = Column(Float, default=0)
+    paid_amount = Column(Float, default=0)
+    notes = Column(Text, nullable=True)
+    delivery_address = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, server_default='NOW()')
+    updated_at = Column(TIMESTAMP, server_default='NOW()', onupdate=func.now())
+    created_by = Column(Integer, nullable=True)
+
+class CustomerOrderItemModel(Base):
+    """Lignes de commande client"""
+    __tablename__ = 'customer_order_items'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    order_id = Column(Integer, Column('order_id', Integer, ForeignKey('customer_orders.id', ondelete='CASCADE')), nullable=False)
+    product_id = Column(Integer, Column('product_id', Integer, ForeignKey('products.id')), nullable=False)
+    quantity = Column(Integer, nullable=False)
+    unit_price = Column(Float, nullable=False)
+    discount_percent = Column(Float, default=0)
+    line_total = Column(Float, nullable=False)
+    batch_id = Column(Integer, nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, server_default='NOW()')
+
+class PurchaseOrderModel(Base):
+    """Commandes fournisseurs"""
+    __tablename__ = 'purchase_orders'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    po_number = Column(String(50), unique=True, nullable=False)
+    supplier_id = Column(Integer, Column('supplier_id', Integer, ForeignKey('suppliers.id')), nullable=False)
+    order_date = Column(DateTime, server_default='NOW()')
+    expected_delivery_date = Column(DateTime, nullable=True)
+    actual_delivery_date = Column(DateTime, nullable=True)
+    status = Column(String(30), default='draft')
+    payment_status = Column(String(30), default='unpaid')
+    subtotal = Column(Float, default=0)
+    tax_amount = Column(Float, default=0)
+    total_amount = Column(Float, default=0)
+    paid_amount = Column(Float, default=0)
+    notes = Column(Text, nullable=True)
+    delivery_address = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, server_default='NOW()')
+    updated_at = Column(TIMESTAMP, server_default='NOW()', onupdate=func.now())
+    created_by = Column(Integer, nullable=True)
+
+class PurchaseOrderItemModel(Base):
+    """Lignes de commande fournisseur"""
+    __tablename__ = 'purchase_order_items'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    po_id = Column(Integer, Column('po_id', Integer, ForeignKey('purchase_orders.id', ondelete='CASCADE')), nullable=False)
+    product_id = Column(Integer, Column('product_id', Integer, ForeignKey('products.id')), nullable=False)
+    quantity = Column(Integer, nullable=False)
+    unit_price = Column(Float, nullable=False)
+    line_total = Column(Float, nullable=False)
+    quantity_received = Column(Integer, default=0)
+    quality_rating = Column(Float, nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, server_default='NOW()')
+
+class IncubatorModel(Base):
+    """Équipements ESP32"""
+    __tablename__ = 'incubators'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    device_id = Column(String(50), unique=True, nullable=False)
+    name = Column(String(100), nullable=False)
+    location = Column(String(255), nullable=True)
+    capacity = Column(Integer, nullable=False)
+    status = Column(String(30), default='idle')
+    is_online = Column(Boolean, default=False)
+    last_seen = Column(TIMESTAMP, nullable=True)
+    created_at = Column(TIMESTAMP, server_default='NOW()')
+    updated_at = Column(TIMESTAMP, server_default='NOW()', onupdate=func.now())
+
+class IncubatorCurrentStateModel(Base):
+    """État temps réel incubateurs"""
+    __tablename__ = 'incubator_current_state'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    incubator_id = Column(Integer, Column('incubator_id', Integer, ForeignKey('incubators.id', ondelete='CASCADE')), nullable=False, unique=True)
+    temperature = Column(Float, nullable=True)
+    humidity = Column(Float, nullable=True)
+    rotation_count = Column(Integer, default=0)
+    has_alert = Column(Boolean, default=False)
+    alert_type = Column(String(50), nullable=True)
+    updated_at = Column(TIMESTAMP, server_default='NOW()', onupdate=func.now())
+
+class IncubatorTelemetryModel(Base):
+    """Historique des données IoT"""
+    __tablename__ = 'incubator_telemetry'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    incubator_id = Column(Integer, Column('incubator_id', Integer, ForeignKey('incubators.id', ondelete='CASCADE')), nullable=False)
+    temperature = Column(Float, nullable=True)
+    humidity = Column(Float, nullable=True)
+    rotation_count = Column(Integer, nullable=True)
+    timestamp = Column(TIMESTAMP, server_default='NOW()')
+
+class BatchModel(Base):
+    """Lots d'incubation"""
+    __tablename__ = 'batches'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    batch_number = Column(String(50), unique=True, nullable=False)
+    incubator_id = Column(Integer, Column('incubator_id', Integer, ForeignKey('incubators.id')), nullable=True)
+    po_id = Column(Integer, Column('po_id', Integer, ForeignKey('purchase_orders.id')), nullable=True)
+    egg_quantity = Column(Integer, nullable=False)
+    egg_supplier_id = Column(Integer, Column('egg_supplier_id', Integer, ForeignKey('suppliers.id')), nullable=True)
+    start_date = Column(DateTime, nullable=False)
+    expected_hatch_date = Column(DateTime, nullable=True)
+    actual_hatch_date = Column(DateTime, nullable=True)
+    end_date = Column(DateTime, nullable=True)
+    status = Column(String(30), default='in_progress')
+    hatched_count = Column(Integer, default=0)
+    failed_count = Column(Integer, default=0)
+    hatch_rate = Column(Float, nullable=True)
+    total_cost = Column(Float, default=0)
+    cost_per_chick = Column(Float, nullable=True)
+    avg_temperature = Column(Float, nullable=True)
+    avg_humidity = Column(Float, nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, server_default='NOW()')
+    updated_at = Column(TIMESTAMP, server_default='NOW()', onupdate=func.now())
+
+class DailyMetricModel(Base):
+    """KPIs calculés quotidiennement"""
+    __tablename__ = 'daily_metrics'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    metric_date = Column(DateTime, unique=True, nullable=False)
+    active_batches = Column(Integer, default=0)
+    eggs_in_incubation = Column(Integer, default=0)
+    incubators_running = Column(Integer, default=0)
+    daily_revenue = Column(Float, default=0)
+    daily_orders = Column(Integer, default=0)
+    daily_purchases = Column(Float, default=0)
+    average_hatch_rate = Column(Float, nullable=True)
+    chicks_produced = Column(Integer, default=0)
+    created_at = Column(TIMESTAMP, server_default='NOW()')
+
 class DatabaseManager:
     """Gestionnaire de base de données avec pool de connexions"""
     

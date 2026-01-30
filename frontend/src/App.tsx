@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react'
 import './App.css'
 import Dashboard from './pages/Dashboard'
 import Settings from './pages/Settings'
+import CRMDashboard from './pages/CRMDashboard'
 import { useSensorStore } from './store/sensorStore'
 import { useAppStore } from './store/appStore'
 import { AlertCircle } from 'lucide-react'
 
 function App() {
-  const [currentPage, setCurrentPage] = useState<'dashboard' | 'settings'>('dashboard')
+  const [currentPage, setCurrentPage] = useState<'dashboard' | 'settings' | 'crm'>('dashboard')
   const [isOnline, setIsOnline] = useState(navigator.onLine)
   const { error } = useSensorStore()
   const { isDarkMode } = useAppStore()
@@ -47,6 +48,12 @@ function App() {
               Tableau de Bord
             </button>
             <button
+              className={`nav-btn ${currentPage === 'crm' ? 'active' : ''}`}
+              onClick={() => setCurrentPage('crm')}
+            >
+              CRM & Analytics
+            </button>
+            <button
               className={`nav-btn ${currentPage === 'settings' ? 'active' : ''}`}
               onClick={() => setCurrentPage('settings')}
             >
@@ -63,7 +70,7 @@ function App() {
             Vous êtes actuellement hors ligne
           </div>
         )}
-        
+
         {error && (
           <div className="alert alert-error">
             <AlertCircle size={20} />
@@ -72,6 +79,7 @@ function App() {
         )}
 
         {currentPage === 'dashboard' && <Dashboard />}
+        {currentPage === 'crm' && <CRMDashboard />}
         {currentPage === 'settings' && <Settings />}
       </main>
 

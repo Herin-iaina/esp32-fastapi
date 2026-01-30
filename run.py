@@ -5,7 +5,7 @@ from models.login import create_user
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from routers import auth, system, parameter, sensor_values
+from routers import auth, system, parameter, sensor_values, crm, commercial, analytics
 from pathlib import Path
 
 from core.config import settings
@@ -51,6 +51,9 @@ app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(sensor_values.router, prefix="/api", tags=["Capteurs"])
 app.include_router(system.router, prefix="/api", tags=["Système"])
 app.include_router(parameter.router, prefix="/api", tags=["Paramètres"])
+app.include_router(crm.router, prefix="/api/crm", tags=["CRM"])
+app.include_router(commercial.router, prefix="/api/commercial", tags=["Commercial"])
+app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
 
 @app.get("/api/health", tags=["Health"])
 async def health_check():
