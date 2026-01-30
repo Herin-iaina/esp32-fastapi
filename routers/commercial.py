@@ -7,7 +7,7 @@ from models.crm_schemas import CustomerOrderCreate, CustomerOrderResponse
 
 router = APIRouter()
 
-@router.post("/orders", response_model=CustomerOrderResponse, status_code=status.HTTP_211_CREATED)
+@router.post("/orders", response_model=CustomerOrderResponse, status_code=status.HTTP_201_CREATED)
 def create_customer_order(order: CustomerOrderCreate, db: Session = Depends(get_db)):
     # 1. Create order
     db_order = CustomerOrderModel(

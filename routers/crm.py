@@ -9,7 +9,7 @@ router = APIRouter()
 
 # --- Contacts ---
 
-@router.post("/contacts", response_model=ContactResponse, status_code=status.HTTP_211_CREATED)
+@router.post("/contacts", response_model=ContactResponse, status_code=status.HTTP_201_CREATED)
 def create_contact(contact: ContactCreate, db: Session = Depends(get_db)):
     db_contact = ContactModel(**contact.model_dump())
     db.add(db_contact)
@@ -30,7 +30,7 @@ def get_contact(contact_id: int, db: Session = Depends(get_db)):
 
 # --- Customers ---
 
-@router.post("/customers", response_model=CustomerResponse, status_code=status.HTTP_211_CREATED)
+@router.post("/customers", response_model=CustomerResponse, status_code=status.HTTP_201_CREATED)
 def create_customer(customer: CustomerCreate, db: Session = Depends(get_db)):
     db_customer = CustomerModel(**customer.model_dump())
     db.add(db_customer)
@@ -44,7 +44,7 @@ def get_customers(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 
 # --- Suppliers ---
 
-@router.post("/suppliers", response_model=SupplierResponse, status_code=status.HTTP_211_CREATED)
+@router.post("/suppliers", response_model=SupplierResponse, status_code=status.HTTP_201_CREATED)
 def create_supplier(supplier: SupplierCreate, db: Session = Depends(get_db)):
     db_supplier = SupplierModel(**supplier.model_dump())
     db.add(db_supplier)

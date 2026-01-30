@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 
@@ -9,7 +9,7 @@ class ContactBase(BaseModel):
     type: str  # 'customer', 'supplier', 'both'
     name: str
     legal_name: Optional[str] = None
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None
     phone: Optional[str] = None
     mobile: Optional[str] = None
     address_line1: Optional[str] = None

@@ -7,7 +7,7 @@ from contextlib import contextmanager
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Float, Text, TIMESTAMP, func, text
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Float, Text, TIMESTAMP, func, text, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import StaticPool
@@ -151,7 +151,7 @@ class CustomerModel(Base):
     __tablename__ = 'customers'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    contact_id = Column(Integer, Column('contact_id', Integer, ForeignKey('contacts.id', ondelete='CASCADE')), nullable=False, unique=True)
+    contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False, unique=True)
     payment_terms = Column(Integer, default=30)
     credit_limit = Column(Float, default=0)
     discount_rate = Column(Float, default=0)
@@ -169,7 +169,7 @@ class SupplierModel(Base):
     __tablename__ = 'suppliers'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    contact_id = Column(Integer, Column('contact_id', Integer, ForeignKey('contacts.id', ondelete='CASCADE')), nullable=False, unique=True)
+    contact_id = Column(Integer, ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False, unique=True)
     payment_terms = Column(Integer, default=30)
     minimum_order_amount = Column(Float, default=0)
     delivery_time_days = Column(Integer, default=7)
@@ -210,7 +210,7 @@ class CustomerOrderModel(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     order_number = Column(String(50), unique=True, nullable=False)
-    customer_id = Column(Integer, Column('customer_id', Integer, ForeignKey('customers.id')), nullable=False)
+    customer_id = Column(Integer, ForeignKey('customers.id'), nullable=False)
     order_date = Column(DateTime, server_default='NOW()')
     expected_delivery_date = Column(DateTime, nullable=True)
     actual_delivery_date = Column(DateTime, nullable=True)
@@ -232,8 +232,8 @@ class CustomerOrderItemModel(Base):
     __tablename__ = 'customer_order_items'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    order_id = Column(Integer, Column('order_id', Integer, ForeignKey('customer_orders.id', ondelete='CASCADE')), nullable=False)
-    product_id = Column(Integer, Column('product_id', Integer, ForeignKey('products.id')), nullable=False)
+    order_id = Column(Integer, ForeignKey('customer_orders.id', ondelete='CASCADE'), nullable=False)
+    product_id = Column(Integer, ForeignKey('products.id'), nullable=False)
     quantity = Column(Integer, nullable=False)
     unit_price = Column(Float, nullable=False)
     discount_percent = Column(Float, default=0)
@@ -248,7 +248,7 @@ class PurchaseOrderModel(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     po_number = Column(String(50), unique=True, nullable=False)
-    supplier_id = Column(Integer, Column('supplier_id', Integer, ForeignKey('suppliers.id')), nullable=False)
+    supplier_id = Column(Integer, ForeignKey('suppliers.id'), nullable=False)
     order_date = Column(DateTime, server_default='NOW()')
     expected_delivery_date = Column(DateTime, nullable=True)
     actual_delivery_date = Column(DateTime, nullable=True)
@@ -269,8 +269,8 @@ class PurchaseOrderItemModel(Base):
     __tablename__ = 'purchase_order_items'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    po_id = Column(Integer, Column('po_id', Integer, ForeignKey('purchase_orders.id', ondelete='CASCADE')), nullable=False)
-    product_id = Column(Integer, Column('product_id', Integer, ForeignKey('products.id')), nullable=False)
+    po_id = Column(Integer, ForeignKey('purchase_orders.id', ondelete='CASCADE'), nullable=False)
+    product_id = Column(Integer, ForeignKey('products.id'), nullable=False)
     quantity = Column(Integer, nullable=False)
     unit_price = Column(Float, nullable=False)
     line_total = Column(Float, nullable=False)
@@ -299,7 +299,7 @@ class IncubatorCurrentStateModel(Base):
     __tablename__ = 'incubator_current_state'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    incubator_id = Column(Integer, Column('incubator_id', Integer, ForeignKey('incubators.id', ondelete='CASCADE')), nullable=False, unique=True)
+    incubator_id = Column(Integer, ForeignKey('incubators.id', ondelete='CASCADE'), nullable=False, unique=True)
     temperature = Column(Float, nullable=True)
     humidity = Column(Float, nullable=True)
     rotation_count = Column(Integer, default=0)
@@ -312,7 +312,7 @@ class IncubatorTelemetryModel(Base):
     __tablename__ = 'incubator_telemetry'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    incubator_id = Column(Integer, Column('incubator_id', Integer, ForeignKey('incubators.id', ondelete='CASCADE')), nullable=False)
+    incubator_id = Column(Integer, ForeignKey('incubators.id', ondelete='CASCADE'), nullable=False)
     temperature = Column(Float, nullable=True)
     humidity = Column(Float, nullable=True)
     rotation_count = Column(Integer, nullable=True)
@@ -324,10 +324,10 @@ class BatchModel(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     batch_number = Column(String(50), unique=True, nullable=False)
-    incubator_id = Column(Integer, Column('incubator_id', Integer, ForeignKey('incubators.id')), nullable=True)
-    po_id = Column(Integer, Column('po_id', Integer, ForeignKey('purchase_orders.id')), nullable=True)
+    incubator_id = Column(Integer, ForeignKey('incubators.id'), nullable=True)
+    po_id = Column(Integer, ForeignKey('purchase_orders.id'), nullable=True)
     egg_quantity = Column(Integer, nullable=False)
-    egg_supplier_id = Column(Integer, Column('egg_supplier_id', Integer, ForeignKey('suppliers.id')), nullable=True)
+    egg_supplier_id = Column(Integer, ForeignKey('suppliers.id'), nullable=True)
     start_date = Column(DateTime, nullable=False)
     expected_hatch_date = Column(DateTime, nullable=True)
     actual_hatch_date = Column(DateTime, nullable=True)
