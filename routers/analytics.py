@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 from apps.database_configuration import (
     db_manager, CustomerOrderModel, CustomerOrderItemModel, CustomerModel, SupplierModel,
-    DataTempModel, ParameterDataModel, ContactModel, get_db
+    DataTempModel, ParameterDataModel, ContactModel, BatchModel, PurchaseOrderModel, get_db
 )
 
 router = APIRouter()
@@ -62,7 +62,7 @@ def get_dashboard_overview(db: Session = Depends(get_db)):
             "pendingOrders": pending_orders,
             "activeSuppliers": active_suppliers,
             "activeCustomers": active_customers,
-            "hatchRate": 87.5,
+            "hatchRate": db.query(func.avg(BatchModel.hatch_rate)).scalar() or 0,
             "currentTemperature": latest_data.average_temperature if latest_data else 0,
             "currentHumidity": latest_data.average_humidity if latest_data else 0,
             "targetTemperature": active_param.temp_incubation if active_param else 37.5,
@@ -330,22 +330,30 @@ def get_active_batches(db: Session = Depends(get_db)):
 def get_kpis(db: Session = Depends(get_db)):
     """KPIs détaillés pour la vue analytique"""
 
-    # Calcul du coût par poussin (estimation)
-    cost_per_chick = 1247  # À calculer depuis les vrais coûts
+    # Calcul du coût par poussin moyen
+    cost_per_chick = db.query(func.avg(BatchModel.cost_per_chick)).scalar() or 0
 
-    # Marge moyenne
+    # Marge moyenne réelle
     total_revenue = db.query(func.sum(CustomerOrderModel.total_amount)).scalar() or 0
-    estimated_costs = total_revenue * 0.615
-    margin = ((total_revenue - estimated_costs) / total_revenue * 100) if total_revenue > 0 else 0
+    total_costs = db.query(func.sum(PurchaseOrderModel.total_amount)).scalar() or 0
+    
+    margin = 0
+    if total_revenue > 0:
+        margin = ((total_revenue - total_costs) / total_revenue) * 100
 
-    # Délai moyen de livraison (jours entre commande et livraison)
-    avg_delivery_days = 2.3  # À calculer depuis les vrais données
+    # Délai moyen de livraison réel
+    # On calcule la différence entre order_date et actual_delivery_date pour les commandes livrées
+    avg_delivery_days = db.query(
+        func.avg(
+            func.extract('day', CustomerOrderModel.actual_delivery_date - CustomerOrderModel.order_date)
+        )
+    ).filter(CustomerOrderModel.status == 'delivered').scalar() or 0
 
     return {
-        "costPerChick": cost_per_chick,
-        "costPerChickTrend": -5.2,
+        "costPerChick": round(cost_per_chick, 1),
+        "costPerChickTrend": 0, # Nécessite historique plus complexe
         "averageMargin": round(margin, 1),
-        "marginTrend": 2.1,
-        "avgDeliveryDays": avg_delivery_days,
-        "deliveryTrend": 0.5
+        "marginTrend": 0,
+        "avgDeliveryDays": round(avg_delivery_days, 1),
+        "deliveryTrend": 0
     }

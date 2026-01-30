@@ -185,7 +185,9 @@ const CRMDashboard = () => {
                     suppliersRes,
                     ordersRes,
                     batchesRes,
-                    kpisRes
+                    kpisRes,
+                    sensorRes,
+                    paramRes
                 ] = await Promise.all([
                     axios.get(`${API_BASE_URL}/analytics/dashboard/overview`),
                     axios.get(`${API_BASE_URL}/analytics/dashboard/incubator-performance`),
@@ -195,10 +197,41 @@ const CRMDashboard = () => {
                     axios.get(`${API_BASE_URL}/analytics/dashboard/supplier-performance`),
                     axios.get(`${API_BASE_URL}/analytics/dashboard/recent-orders`),
                     axios.get(`${API_BASE_URL}/analytics/dashboard/active-batches`),
-                    axios.get(`${API_BASE_URL}/analytics/dashboard/kpis`)
+                    axios.get(`${API_BASE_URL}/analytics/dashboard/kpis`),
+                    axios.get(`${API_BASE_URL}/sensor/values`),
+                    axios.get(`${API_BASE_URL}/parameter`)
                 ]);
 
-                setStats(statsRes.data.stats);
+                const overviewStats = statsRes.data.stats;
+                const sensorData = sensorRes.data.data;
+                const paramData = paramRes.data;
+
+                // Calculer daysRemaining et currentDay
+                let daysRemaining = 0;
+                let currentDay = 0;
+                let totalDays = 21;
+                if (paramData.start_date && paramData.timetoclose) {
+                    const start = new Date(paramData.start_date);
+                    const now = new Date();
+                    const diffTime = now.getTime() - start.getTime();
+                    currentDay = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                    totalDays = paramData.timetoclose;
+                    daysRemaining = Math.max(0, totalDays - currentDay);
+                }
+
+                setStats({
+                    ...overviewStats,
+                    activeIncubators: Object.keys(sensorData.sensors || {}).length,
+                    currentTemperature: sensorData.average_temperature || 0,
+                    currentHumidity: sensorData.average_humidity || 0,
+                    targetTemperature: paramData.temp_incubation || 37.5,
+                    targetHumidity: paramData.humidity_target || 60.0,
+                    daysRemaining: daysRemaining,
+                    currentDay: currentDay,
+                    totalDays: totalDays,
+                    species: paramData.espece || 'N/A'
+                });
+
                 setIncubatorData(incubatorRes.data.data);
                 setRevenueData(revenueRes.data.data);
                 setOrdersByStatus(ordersStatusRes.data.data);
@@ -258,11 +291,10 @@ const CRMDashboard = () => {
                                 <button
                                     key={tab.id}
                                     onClick={() => setActiveTab(tab.id)}
-                                    className={`flex items-center py-4 px-2 border-b-2 font-medium text-sm transition-colors whitespace-nowrap ${
-                                        activeTab === tab.id
+                                    className={`flex items-center py-4 px-2 border-b-2 font-medium text-sm transition-colors whitespace-nowrap ${activeTab === tab.id
                                             ? 'border-blue-500 text-blue-600'
                                             : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                    }`}
+                                        }`}
                                 >
                                     <Icon size={18} className="mr-2" />
                                     {tab.label}
@@ -370,17 +402,15 @@ const CRMDashboard = () => {
                                                         <p className="font-semibold text-sm">{batch.id}</p>
                                                         <p className="text-xs text-gray-500">{batch.incubator} - {batch.eggs} oeufs - {batch.species}</p>
                                                     </div>
-                                                    <span className={`text-xs px-2 py-1 rounded-full ${
-                                                        batch.status === 'on-track' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
-                                                    }`}>
+                                                    <span className={`text-xs px-2 py-1 rounded-full ${batch.status === 'on-track' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+                                                        }`}>
                                                         Jour {batch.day}/{batch.totalDays}
                                                     </span>
                                                 </div>
                                                 <div className="w-full bg-gray-200 rounded-full h-2">
                                                     <div
-                                                        className={`h-2 rounded-full transition-all ${
-                                                            batch.status === 'on-track' ? 'bg-green-500' : 'bg-yellow-500'
-                                                        }`}
+                                                        className={`h-2 rounded-full transition-all ${batch.status === 'on-track' ? 'bg-green-500' : 'bg-yellow-500'
+                                                            }`}
                                                         style={{ width: `${batch.progress}%` }}
                                                     />
                                                 </div>
@@ -407,13 +437,12 @@ const CRMDashboard = () => {
                                                         <p className="font-semibold text-sm">{order.id}</p>
                                                         <p className="text-xs text-gray-500">{order.customer}</p>
                                                     </div>
-                                                    <span className={`text-xs px-2 py-1 rounded-full ${
-                                                        order.status === 'confirmed' ? 'bg-blue-100 text-blue-800' :
-                                                        order.status === 'in_production' ? 'bg-yellow-100 text-yellow-800' :
-                                                        order.status === 'ready' ? 'bg-green-100 text-green-800' :
-                                                        order.status === 'pending' ? 'bg-orange-100 text-orange-800' :
-                                                        'bg-gray-100 text-gray-800'
-                                                    }`}>
+                                                    <span className={`text-xs px-2 py-1 rounded-full ${order.status === 'confirmed' ? 'bg-blue-100 text-blue-800' :
+                                                            order.status === 'in_production' ? 'bg-yellow-100 text-yellow-800' :
+                                                                order.status === 'ready' ? 'bg-green-100 text-green-800' :
+                                                                    order.status === 'pending' ? 'bg-orange-100 text-orange-800' :
+                                                                        'bg-gray-100 text-gray-800'
+                                                        }`}>
                                                         {order.statusLabel}
                                                     </span>
                                                 </div>
@@ -498,9 +527,8 @@ const CRMDashboard = () => {
                                                 <p className="font-bold text-lg">{batch.id}</p>
                                                 <p className="text-sm text-gray-500">{batch.incubator}</p>
                                             </div>
-                                            <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                                                batch.status === 'on-track' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
-                                            }`}>
+                                            <span className={`px-3 py-1 rounded-full text-sm font-medium ${batch.status === 'on-track' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+                                                }`}>
                                                 {batch.status === 'on-track' ? 'En cours' : 'Attention'}
                                             </span>
                                         </div>
@@ -617,13 +645,12 @@ const CRMDashboard = () => {
                                                 <td className="py-3 px-4">{order.customer}</td>
                                                 <td className="py-3 px-4 text-gray-500">{order.date}</td>
                                                 <td className="py-3 px-4">
-                                                    <span className={`px-2 py-1 rounded-full text-xs ${
-                                                        order.status === 'confirmed' ? 'bg-blue-100 text-blue-800' :
-                                                        order.status === 'in_production' ? 'bg-yellow-100 text-yellow-800' :
-                                                        order.status === 'ready' ? 'bg-green-100 text-green-800' :
-                                                        order.status === 'pending' ? 'bg-orange-100 text-orange-800' :
-                                                        'bg-gray-100 text-gray-800'
-                                                    }`}>
+                                                    <span className={`px-2 py-1 rounded-full text-xs ${order.status === 'confirmed' ? 'bg-blue-100 text-blue-800' :
+                                                            order.status === 'in_production' ? 'bg-yellow-100 text-yellow-800' :
+                                                                order.status === 'ready' ? 'bg-green-100 text-green-800' :
+                                                                    order.status === 'pending' ? 'bg-orange-100 text-orange-800' :
+                                                                        'bg-gray-100 text-gray-800'
+                                                        }`}>
                                                         {order.statusLabel}
                                                     </span>
                                                 </td>
