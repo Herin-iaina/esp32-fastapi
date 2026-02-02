@@ -45,10 +45,10 @@ const char* apiKey = "Votre_Cle_API";
 // Thresholds for backup mode
 const float TEMP_TARGET = 37.7;           // Température cible
 const float HUMIDITY_TARGET = 45.0;       // Humidité cible
-const float TOLERANCE_PERCENT = 2.0;      // Tolérance ±2%
+const float TOLERANCE_PERCENT = 1.5;      // Tolérance ±2%
 
 // Seuils calculés
-const float TEMP_MIN = TEMP_TARGET * (1.0 - TOLERANCE_PERCENT / 100.0);   // 36.95°C
+const float TEMP_MIN = TEMP_TARGET * (1.0 - (TOLERANCE_PERCENT / 100.0));   // 36.95°C
 const float TEMP_MAX = TEMP_TARGET * (1.0 + TOLERANCE_PERCENT / 100.0);   // 38.45°C
 const float HUMIDITY_MIN = HUMIDITY_TARGET * (1.0 - TOLERANCE_PERCENT / 100.0);  // 44.1%
 const float HUMIDITY_MAX = HUMIDITY_TARGET * (1.0 + TOLERANCE_PERCENT / 100.0);  // 45.9%
