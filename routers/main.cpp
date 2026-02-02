@@ -19,6 +19,15 @@
 #define FAN_PIN         14
 #define HUMIDIFIER_PIN  15
 
+// LED Status Pins
+#define LED_GREEN_PIN   16  // Température et humidité OK (±2%)
+#define LED_ORANGE_PIN  17  // Température ou humidité < normal
+#define LED_RED_PIN     18  // Température ou humidité > normal
+#define LED_BLUE_PIN    19  // Connexion serveur NOK
+
+// Button Pin
+#define BUTTON_STEPPER_PIN  23  // Bouton pour lancer le stepper manuellement
+
 // LCD I2C (adresse 0x27 par défaut, ajuster si nécessaire)
 #define LCD_ADDRESS     0x27
 #define LCD_COLS        16
@@ -34,11 +43,21 @@ const int serverPort = 5000;
 const char* apiKey = "Votre_Cle_API";
 
 // Thresholds for backup mode
-const float TEMP_THRESHOLD = 37.7;
-const float HUMIDITY_THRESHOLD = 45.0;
+const float TEMP_TARGET = 37.7;           // Température cible
+const float HUMIDITY_TARGET = 45.0;       // Humidité cible
+const float TOLERANCE_PERCENT = 2.0;      // Tolérance ±2%
+
+// Seuils calculés
+const float TEMP_MIN = TEMP_TARGET * (1.0 - TOLERANCE_PERCENT / 100.0);   // 36.95°C
+const float TEMP_MAX = TEMP_TARGET * (1.0 + TOLERANCE_PERCENT / 100.0);   // 38.45°C
+const float HUMIDITY_MIN = HUMIDITY_TARGET * (1.0 - TOLERANCE_PERCENT / 100.0);  // 44.1%
+const float HUMIDITY_MAX = HUMIDITY_TARGET * (1.0 + TOLERANCE_PERCENT / 100.0);  // 45.9%
 
 // Timing
 const unsigned long SEND_INTERVAL = 5000;  // 5 secondes
+
+// Mode autonome
+const int MAX_SERVER_RETRIES = 10;  // Nombre max de tentatives avant mode autonome
 
 // ============== OBJETS GLOBAUX ==============
 
@@ -55,6 +74,11 @@ LiquidCrystal_I2C lcd(LCD_ADDRESS, LCD_COLS, LCD_ROWS);
 
 bool fanOn = false;
 bool humidifierOn = false;
+bool autonomousMode = false;        // Mode autonome activé
+int serverFailCount = 0;            // Compteur d'échecs de connexion au serveur
+bool serverConnected = false;       // État de connexion au serveur
+bool buttonPressed = false;         // État du bouton stepper
+unsigned long lastButtonPress = 0;  // Anti-rebond bouton
 
 struct SensorData {
   float temperature;
@@ -128,9 +152,75 @@ String buildServerUrl(const char* endpoint) {
   return String("http://") + serverIP + ":" + String(serverPort) + endpoint;
 }
 
+// ============== FONCTIONS LED STATUS ==============
+
+void initLEDs() {
+  pinMode(LED_GREEN_PIN, OUTPUT);
+  pinMode(LED_ORANGE_PIN, OUTPUT);
+  pinMode(LED_RED_PIN, OUTPUT);
+  pinMode(LED_BLUE_PIN, OUTPUT);
+
+  // Toutes les LEDs éteintes au démarrage
+  digitalWrite(LED_GREEN_PIN, LOW);
+  digitalWrite(LED_ORANGE_PIN, LOW);
+  digitalWrite(LED_RED_PIN, LOW);
+  digitalWrite(LED_BLUE_PIN, LOW);
+}
+
+void setAllLEDsOff() {
+  digitalWrite(LED_GREEN_PIN, LOW);
+  digitalWrite(LED_ORANGE_PIN, LOW);
+  digitalWrite(LED_RED_PIN, LOW);
+  digitalWrite(LED_BLUE_PIN, LOW);
+}
+
+void updateStatusLEDs(float avgTemp, float avgHumid, bool serverOk) {
+  setAllLEDsOff();
+
+  // LED Bleue: Connexion serveur NOK (Non OK)
+  if (!serverOk || autonomousMode) {
+    digitalWrite(LED_BLUE_PIN, HIGH);
+  }
+
+  // Vérifier si les valeurs sont valides
+  if (avgTemp <= 0 || avgHumid <= 0) {
+    // Pas de données valides - LED rouge
+    digitalWrite(LED_RED_PIN, HIGH);
+    return;
+  }
+
+  // Déterminer l'état température/humidité
+  bool tempOk = (avgTemp >= TEMP_MIN && avgTemp <= TEMP_MAX);
+  bool humidOk = (avgHumid >= HUMIDITY_MIN && avgHumid <= HUMIDITY_MAX);
+  bool tempLow = (avgTemp < TEMP_MIN);
+  bool humidLow = (avgHumid < HUMIDITY_MIN);
+  bool tempHigh = (avgTemp > TEMP_MAX);
+  bool humidHigh = (avgHumid > HUMIDITY_MAX);
+
+  // Logique des LEDs d'état
+  if (tempOk && humidOk) {
+    // Tout est OK (dans la plage ±2%)
+    digitalWrite(LED_GREEN_PIN, HIGH);
+  } else if (tempHigh || humidHigh) {
+    // Température OU humidité trop haute -> Rouge
+    digitalWrite(LED_RED_PIN, HIGH);
+  } else if (tempLow || humidLow) {
+    // Température OU humidité trop basse -> Orange
+    digitalWrite(LED_ORANGE_PIN, HIGH);
+  }
+}
+
 bool sendDataToServer(const String& jsonPayload) {
+  // Si en mode autonome, ne pas essayer de se connecter au serveur
+  if (autonomousMode) {
+    Serial.println("Mode autonome actif - Pas d'envoi au serveur");
+    return false;
+  }
+
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("WiFi non connecte");
+    serverFailCount++;
+    checkAutonomousMode();
     return false;
   }
 
@@ -145,13 +235,54 @@ bool sendDataToServer(const String& jsonPayload) {
     Serial.printf("POST /data - Code: %d\n", httpCode);
     if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_CREATED) {
       Serial.println("Donnees envoyees avec succes");
+      serverFailCount = 0;  // Reset du compteur en cas de succès
+      serverConnected = true;
     }
   } else {
     Serial.printf("Erreur POST: %s\n", http.errorToString(httpCode).c_str());
+    serverFailCount++;
+    serverConnected = false;
+    checkAutonomousMode();
   }
 
   http.end();
   return httpCode > 0;
+}
+
+void checkAutonomousMode() {
+  if (serverFailCount >= MAX_SERVER_RETRIES && !autonomousMode) {
+    autonomousMode = true;
+    Serial.println("\n**************************************************");
+    Serial.println("* ATTENTION: Mode autonome active!               *");
+    Serial.printf("* %d tentatives de connexion echouees            *\n", MAX_SERVER_RETRIES);
+    Serial.println("* Le systeme fonctionne en mode secours          *");
+    Serial.println("**************************************************\n");
+  }
+}
+
+void tryReconnectToServer() {
+  // Tentative de reconnexion périodique même en mode autonome
+  static unsigned long lastReconnectAttempt = 0;
+  const unsigned long RECONNECT_INTERVAL = 60000;  // 1 minute
+
+  if (autonomousMode && (millis() - lastReconnectAttempt > RECONNECT_INTERVAL)) {
+    lastReconnectAttempt = millis();
+    Serial.println("Tentative de reconnexion au serveur...");
+
+    if (WiFi.status() == WL_CONNECTED) {
+      HTTPClient http;
+      http.begin(buildServerUrl("/sensor/automation/status"));
+      int httpCode = http.GET();
+
+      if (httpCode == 200) {
+        Serial.println("Serveur accessible! Sortie du mode autonome.");
+        autonomousMode = false;
+        serverFailCount = 0;
+        serverConnected = true;
+      }
+      http.end();
+    }
+  }
 }
 
 bool getAutomationStatus() {
@@ -233,22 +364,45 @@ bool getStepperCommand() {
 void applyBackupLogic(float avgTemp, float avgHumid) {
   Serial.println("Mode autonome - Logique de secours");
 
-  // Fan control based on temperature
-  if (avgTemp > 0 && avgTemp > TEMP_THRESHOLD) {
+  // Fan control: s'active si température < normale (pour distribuer la chaleur)
+  if (avgTemp > 0 && avgTemp < TEMP_MIN) {
     digitalWrite(FAN_PIN, HIGH);
     fanOn = true;
+    Serial.println("Fan ON - Temperature basse, distribution chaleur");
   } else {
     digitalWrite(FAN_PIN, LOW);
     fanOn = false;
   }
 
-  // Humidifier control based on humidity
-  if (avgHumid > 0 && avgHumid < HUMIDITY_THRESHOLD) {
+  // Humidifier control: s'active si humidité < normale
+  if (avgHumid > 0 && avgHumid < HUMIDITY_MIN) {
     digitalWrite(HUMIDIFIER_PIN, HIGH);
     humidifierOn = true;
+    Serial.println("Humidificateur ON - Humidite basse");
   } else {
     digitalWrite(HUMIDIFIER_PIN, LOW);
     humidifierOn = false;
+  }
+}
+
+// ============== GESTION BOUTON STEPPER ==============
+
+void checkStepperButton() {
+  const unsigned long DEBOUNCE_DELAY = 200;  // Anti-rebond 200ms
+
+  // Lecture du bouton (INPUT_PULLUP = LOW quand pressé)
+  if (digitalRead(BUTTON_STEPPER_PIN) == LOW) {
+    // Anti-rebond
+    if (millis() - lastButtonPress > DEBOUNCE_DELAY) {
+      lastButtonPress = millis();
+      buttonPressed = true;
+
+      Serial.println("Bouton presse - Lancement rotation stepper");
+
+      // Lancer le stepper (1 tour complet = 200 pas pour un moteur 1.8°/pas)
+      stepper.moveTo(stepper.currentPosition() + 200);
+      stepper.setSpeed(100);
+    }
   }
 }
 
@@ -272,13 +426,16 @@ void displayStatusOnLCD(float avgTemp, float avgHumid) {
   lcd.clear();
 
   // Ligne 1: Temperature et Humidite moyennes
-  // Format: "T:37.5C H:45.2%"
+  // Format: "T:37.5C H:45.2%" ou "T:37.5C H:45% A" (A = Autonome)
   lcd.setCursor(0, 0);
   lcd.print("T:");
   lcd.print(avgTemp, 1);
   lcd.print("C H:");
-  lcd.print(avgHumid, 1);
+  lcd.print(avgHumid, 0);  // 0 décimale pour laisser place au mode
   lcd.print("%");
+  if (autonomousMode) {
+    lcd.print(" A");  // Indicateur mode autonome
+  }
 
   // Ligne 2: Etat Fan et Humidificateur
   // Format: "Fan:ON  Hum:OFF"
@@ -315,6 +472,13 @@ void setup() {
   pinMode(HUMIDIFIER_PIN, OUTPUT);
   digitalWrite(FAN_PIN, LOW);
   digitalWrite(HUMIDIFIER_PIN, LOW);
+
+  // Initialize status LEDs
+  initLEDs();
+  digitalWrite(LED_BLUE_PIN, HIGH);  // LED bleue pendant l'initialisation
+
+  // Initialize stepper button (with internal pull-up)
+  pinMode(BUTTON_STEPPER_PIN, INPUT_PULLUP);
 
   // Initialize LCD
   lcd.init();
@@ -366,19 +530,38 @@ void loop() {
   String jsonPayload;
   serializeJson(payload, jsonPayload);
 
-  // Send data to server
-  sendDataToServer(jsonPayload);
+  // Send data to server (sauf si mode autonome)
+  bool serverSuccess = false;
+  if (!autonomousMode) {
+    serverSuccess = sendDataToServer(jsonPayload);
+  }
 
   // Get automation commands from server or use backup logic
-  if (!getAutomationStatus()) {
+  if (autonomousMode) {
+    // Mode autonome: toujours utiliser la logique de secours
+    applyBackupLogic(avgTemperature, avgHumidity);
+    // Tenter une reconnexion périodique
+    tryReconnectToServer();
+  } else if (!getAutomationStatus()) {
     applyBackupLogic(avgTemperature, avgHumidity);
   }
 
-  // Get stepper command from server
-  getStepperCommand();
+  // Get stepper command from server (seulement si connecté)
+  if (!autonomousMode) {
+    getStepperCommand();
+  }
+
+  // Check manual stepper button
+  checkStepperButton();
+
+  // Update status LEDs
+  updateStatusLEDs(avgTemperature, avgHumidity, serverSuccess || serverConnected);
 
   // Print status
   printStatus(sensors, 4, avgTemperature, avgHumidity, numFailedSensors);
+  if (autonomousMode) {
+    Serial.println(">>> MODE AUTONOME ACTIF <<<");
+  }
 
   // Display on LCD
   displayStatusOnLCD(avgTemperature, avgHumidity);
