@@ -8,6 +8,7 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - MODE=http
       - APP_DATABASE_URL=postgresql://user:password@db:5432/smartelia_db
       - APP_ENVIRONMENT=prod
       - PYTHONUNBUFFERED=1
@@ -24,6 +25,43 @@ services:
     networks:
       - smartelia-network
     command: uvicorn run:app --host 0.0.0.0 --port 8000 --reload
+
+  # MQTT Middleware (Bridge ESP32 MQTT <-> FastAPI)
+  mqtt-middleware:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: esp32-mqtt-middleware
+    environment:
+      - MODE=mqtt
+      - MQTT_BROKER=mosquitto
+      - MQTT_PORT=1883
+      - API_BASE_URL=http://backend:8000
+      - API_KEY=Votre_Cle_API
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - backend
+      - mosquitto
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - smartelia-network
+    restart: unless-stopped
+
+  # MQTT Broker (Mosquitto)
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: esp32-mosquitto
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    networks:
+      - smartelia-network
+    restart: unless-stopped
 
   # Frontend static (Production) - sert le build via nginx
   frontend:
