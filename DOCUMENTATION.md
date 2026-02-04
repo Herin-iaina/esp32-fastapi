@@ -259,3 +259,24 @@ projet_esp_32/
 **Dernière mise à jour**: 28 Janvier 2025
 **Version**: 2.0.0
 **Statut**: ✅ Complete & Production Ready
+
+
+Commandes
+
+# Lancer tous les services
+docker-compose up -d
+
+# Lancer uniquement l'API (sans MQTT)
+docker-compose up -d backend db
+
+# Lancer avec MQTT
+docker-compose up -d
+
+# Voir les logs du middleware
+docker-compose logs -f mqtt-middleware
+Config ESP32
+Dans les fichiers MQTT de l'ESP32, mettre :
+
+
+const char* mqttServer = "IP_DU_SERVEUR";  // IP de la machine hôte
+const int mqttPort = 1883;
