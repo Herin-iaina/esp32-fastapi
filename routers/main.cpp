@@ -1,7 +1,6 @@
-
 #include <WiFi.h>
 #include <HTTPClient.h>
-#include <ArduinoJson.h>
+#include <ArduinoJson.h>      // v7+ : JsonDocument (remplace StaticJsonDocument/DynamicJsonDocument)
 #include <AccelStepper.h>
 #include <LiquidCrystal_I2C.h>
 #include "DHT.h"
@@ -27,6 +26,7 @@
 
 // Button Pin
 #define BUTTON_STEPPER_PIN  23  // Bouton pour lancer le stepper manuellement
+#define BUTTON_LCD_SCROLL_PIN 25  // Bouton pour defiler manuellement les logs LCD
 
 // LCD I2C (adresse 0x27 par défaut, ajuster si nécessaire)
 #define LCD_ADDRESS     0x27
@@ -34,30 +34,32 @@
 #define LCD_ROWS        2
 
 // WiFi credentials
-const char* ssid = "Airbox-4D56";
-const char* password = "16017581";
+const char* ssid = "Airbox-AB84";
+const char* password = "7ddd6jVJPUR-deEJbxc";
 
 // Server configuration
 const char* serverIP = "192.168.1.100";  // Remplacer par l'IP du serveur
 const int serverPort = 5000;
 const char* apiKey = "Votre_Cle_API";
 
-// Thresholds for backup mode
-const float TEMP_TARGET = 37.7;           // Température cible
-const float HUMIDITY_TARGET = 45.0;       // Humidité cible
-const float TOLERANCE_PERCENT = 1.5;      // Tolérance ±2%
+// Thresholds
+const float TEMP_TARGET      = 37.7;
+const float HUMIDITY_TARGET  = 45.0;
+const float TOLERANCE_PERCENT = 1.5;
 
 // Seuils calculés
-const float TEMP_MIN = TEMP_TARGET * (1.0 - (TOLERANCE_PERCENT / 100.0));   // 36.95°C
-const float TEMP_MAX = TEMP_TARGET * (1.0 + TOLERANCE_PERCENT / 100.0);   // 38.45°C
-const float HUMIDITY_MIN = HUMIDITY_TARGET * (1.0 - TOLERANCE_PERCENT / 100.0);  // 44.1%
-const float HUMIDITY_MAX = HUMIDITY_TARGET * (1.0 + TOLERANCE_PERCENT / 100.0);  // 45.9%
+const float TEMP_MIN     = TEMP_TARGET     * (1.0 - TOLERANCE_PERCENT / 100.0);  // 37.13°C
+const float TEMP_MAX     = TEMP_TARGET     * (1.0 + TOLERANCE_PERCENT / 100.0);  // 38.27°C
+const float HUMIDITY_MIN = HUMIDITY_TARGET * (1.0 - TOLERANCE_PERCENT / 100.0);  // 44.33%
+const float HUMIDITY_MAX = HUMIDITY_TARGET * (1.0 + TOLERANCE_PERCENT / 100.0);  // 45.68%
 
 // Timing
 const unsigned long SEND_INTERVAL = 5000;  // 5 secondes
+const unsigned long LCD_SCROLL_INTERVAL = 3000;  // 3 secondes pour defiler les logs
+const int LCD_LOG_BUFFER_SIZE = 6;
 
 // Mode autonome
-const int MAX_SERVER_RETRIES = 10;  // Nombre max de tentatives avant mode autonome
+const int MAX_SERVER_RETRIES = 10;
 
 // ============== OBJETS GLOBAUX ==============
 
@@ -72,19 +74,98 @@ LiquidCrystal_I2C lcd(LCD_ADDRESS, LCD_COLS, LCD_ROWS);
 
 // ============== VARIABLES D'ÉTAT ==============
 
-bool fanOn = false;
-bool humidifierOn = false;
-bool autonomousMode = false;        // Mode autonome activé
-int serverFailCount = 0;            // Compteur d'échecs de connexion au serveur
-bool serverConnected = false;       // État de connexion au serveur
-bool buttonPressed = false;         // État du bouton stepper
-unsigned long lastButtonPress = 0;  // Anti-rebond bouton
+bool fanOn          = false;
+bool humidifierOn   = false;
+bool autonomousMode = false;
+int  serverFailCount = 0;
+bool serverConnected = false;
+bool buttonPressed   = false;
+unsigned long lastButtonPress = 0;
+
+String lcdLogBuffer[LCD_LOG_BUFFER_SIZE];
+int lcdLogCount = 0;
+int lcdLogIndex = 0;
+unsigned long lastLogScroll = 0;
+unsigned long lastScrollButtonPress = 0;
+
+float avgTemperature = 0;
+float avgHumidity = 0;
+int numFailedSensors = 0;
+bool serverSuccess = false;
 
 struct SensorData {
   float temperature;
   float humidity;
-  bool valid;
+  bool  valid;
 };
+
+void printLCDLine(int row, const String& line) {
+  lcd.setCursor(0, row);
+  lcd.print(line);
+  for (int i = line.length(); i < LCD_COLS; i++) {
+    lcd.print(' ');
+  }
+}
+
+void pushLCDLog(const String& msg) {
+  String text = msg;
+  if (text.length() > LCD_COLS) {
+    text = text.substring(0, LCD_COLS);
+  }
+  if (lcdLogCount > 0 && lcdLogBuffer[lcdLogCount - 1] == text) {
+    return;
+  }
+  if (lcdLogCount < LCD_LOG_BUFFER_SIZE) {
+    lcdLogBuffer[lcdLogCount++] = text;
+  } else {
+    for (int i = 0; i < LCD_LOG_BUFFER_SIZE - 1; i++) {
+      lcdLogBuffer[i] = lcdLogBuffer[i + 1];
+    }
+    lcdLogBuffer[LCD_LOG_BUFFER_SIZE - 1] = text;
+    if (lcdLogIndex > 0) {
+      lcdLogIndex--;
+    }
+  }
+}
+
+String getCurrentLCDLog() {
+  if (lcdLogCount == 0) {
+    return "";
+  }
+  if (lcdLogIndex >= lcdLogCount) {
+    lcdLogIndex = 0;
+  }
+  return lcdLogBuffer[lcdLogIndex];
+}
+
+void setLCDLog(const String& msg) {
+  pushLCDLog(msg);
+}
+
+void advanceLCDLog() {
+  if (lcdLogCount <= 1) {
+    return;
+  }
+  lcdLogIndex = (lcdLogIndex + 1) % lcdLogCount;
+}
+
+void updateLCDScroll(unsigned long now) {
+  if (now - lastLogScroll >= LCD_SCROLL_INTERVAL) {
+    lastLogScroll = now;
+    advanceLCDLog();
+  }
+}
+
+void checkLCDScrollButton() {
+  const unsigned long DEBOUNCE_DELAY = 200;
+  if (digitalRead(BUTTON_LCD_SCROLL_PIN) == LOW) {
+    if (millis() - lastScrollButtonPress > DEBOUNCE_DELAY) {
+      lastScrollButtonPress = millis();
+      Serial.println("Bouton LCD presse - defilement manuel");
+      advanceLCDLog();
+    }
+  }
+}
 
 // ============== FONCTIONS UTILITAIRES ==============
 
@@ -103,35 +184,38 @@ void connectWiFi() {
     Serial.println("\nConnecte au WiFi");
     Serial.print("IP: ");
     Serial.println(WiFi.localIP());
+    setLCDLog("WiFi connecte");
   } else {
     Serial.println("\nEchec connexion WiFi - Mode autonome");
+    setLCDLog("WiFi echec");
   }
 }
 
 SensorData readSensor(DHT& dht, int sensorNum) {
   SensorData data;
-  data.humidity = dht.readHumidity();
+  data.humidity    = dht.readHumidity();
   data.temperature = dht.readTemperature();
-  data.valid = !isnan(data.humidity) && !isnan(data.temperature);
+  data.valid       = !isnan(data.humidity) && !isnan(data.temperature);
 
   if (!data.valid) {
     Serial.printf("Capteur %d: ERREUR de lecture\n", sensorNum);
     data.temperature = 0;
-    data.humidity = 0;
+    data.humidity    = 0;
   }
 
   return data;
 }
 
-void calculateAverages(SensorData sensors[], int count, float& avgTemp, float& avgHumid, int& failedCount) {
-  float totalTemp = 0;
+void calculateAverages(SensorData sensors[], int count,
+                       float& avgTemp, float& avgHumid, int& failedCount) {
+  float totalTemp  = 0;
   float totalHumid = 0;
-  int validCount = 0;
+  int   validCount = 0;
   failedCount = 0;
 
   for (int i = 0; i < count; i++) {
     if (sensors[i].valid) {
-      totalTemp += sensors[i].temperature;
+      totalTemp  += sensors[i].temperature;
       totalHumid += sensors[i].humidity;
       validCount++;
     } else {
@@ -140,10 +224,10 @@ void calculateAverages(SensorData sensors[], int count, float& avgTemp, float& a
   }
 
   if (validCount > 0) {
-    avgTemp = totalTemp / validCount;
+    avgTemp  = totalTemp  / validCount;
     avgHumid = totalHumid / validCount;
   } else {
-    avgTemp = 0;
+    avgTemp  = 0;
     avgHumid = 0;
   }
 }
@@ -155,63 +239,69 @@ String buildServerUrl(const char* endpoint) {
 // ============== FONCTIONS LED STATUS ==============
 
 void initLEDs() {
-  pinMode(LED_GREEN_PIN, OUTPUT);
+  pinMode(LED_GREEN_PIN,  OUTPUT);
   pinMode(LED_ORANGE_PIN, OUTPUT);
-  pinMode(LED_RED_PIN, OUTPUT);
-  pinMode(LED_BLUE_PIN, OUTPUT);
+  pinMode(LED_RED_PIN,    OUTPUT);
+  pinMode(LED_BLUE_PIN,   OUTPUT);
 
-  // Toutes les LEDs éteintes au démarrage
-  digitalWrite(LED_GREEN_PIN, LOW);
+  digitalWrite(LED_GREEN_PIN,  LOW);
   digitalWrite(LED_ORANGE_PIN, LOW);
-  digitalWrite(LED_RED_PIN, LOW);
-  digitalWrite(LED_BLUE_PIN, LOW);
+  digitalWrite(LED_RED_PIN,    LOW);
+  digitalWrite(LED_BLUE_PIN,   LOW);
 }
 
 void setAllLEDsOff() {
-  digitalWrite(LED_GREEN_PIN, LOW);
+  digitalWrite(LED_GREEN_PIN,  LOW);
   digitalWrite(LED_ORANGE_PIN, LOW);
-  digitalWrite(LED_RED_PIN, LOW);
-  digitalWrite(LED_BLUE_PIN, LOW);
+  digitalWrite(LED_RED_PIN,    LOW);
+  digitalWrite(LED_BLUE_PIN,   LOW);
 }
 
 void updateStatusLEDs(float avgTemp, float avgHumid, bool serverOk) {
   setAllLEDsOff();
 
-  // LED Bleue: Connexion serveur NOK (Non OK)
+  // LED Bleue : connexion serveur NOK
   if (!serverOk || autonomousMode) {
     digitalWrite(LED_BLUE_PIN, HIGH);
   }
 
-  // Vérifier si les valeurs sont valides
+  // Pas de données valides → LED rouge
   if (avgTemp <= 0 || avgHumid <= 0) {
-    // Pas de données valides - LED rouge
     digitalWrite(LED_RED_PIN, HIGH);
     return;
   }
 
-  // Déterminer l'état température/humidité
-  bool tempOk = (avgTemp >= TEMP_MIN && avgTemp <= TEMP_MAX);
-  bool humidOk = (avgHumid >= HUMIDITY_MIN && avgHumid <= HUMIDITY_MAX);
-  bool tempLow = (avgTemp < TEMP_MIN);
+  bool tempOk   = (avgTemp  >= TEMP_MIN     && avgTemp  <= TEMP_MAX);
+  bool humidOk  = (avgHumid >= HUMIDITY_MIN && avgHumid <= HUMIDITY_MAX);
+  bool tempHigh = (avgTemp  > TEMP_MAX);
+  bool humidHigh= (avgHumid > HUMIDITY_MAX);
+  bool tempLow  = (avgTemp  < TEMP_MIN);
   bool humidLow = (avgHumid < HUMIDITY_MIN);
-  bool tempHigh = (avgTemp > TEMP_MAX);
-  bool humidHigh = (avgHumid > HUMIDITY_MAX);
 
-  // Logique des LEDs d'état
   if (tempOk && humidOk) {
-    // Tout est OK (dans la plage ±2%)
     digitalWrite(LED_GREEN_PIN, HIGH);
   } else if (tempHigh || humidHigh) {
-    // Température OU humidité trop haute -> Rouge
     digitalWrite(LED_RED_PIN, HIGH);
   } else if (tempLow || humidLow) {
-    // Température OU humidité trop basse -> Orange
     digitalWrite(LED_ORANGE_PIN, HIGH);
   }
 }
 
+// ============== ENVOI DONNÉES SERVEUR ==============
+
+void checkAutonomousMode() {
+  if (serverFailCount >= MAX_SERVER_RETRIES && !autonomousMode) {
+    autonomousMode = true;
+    Serial.println("\n**************************************************");
+    Serial.println("* ATTENTION: Mode autonome active!               *");
+    Serial.printf( "* %d tentatives de connexion echouees            *\n", MAX_SERVER_RETRIES);
+    Serial.println("* Le systeme fonctionne en mode secours          *");
+    Serial.println("**************************************************\n");
+    setLCDLog("Mode autonome");
+  }
+}
+
 bool sendDataToServer(const String& jsonPayload) {
-  // Si en mode autonome, ne pas essayer de se connecter au serveur
   if (autonomousMode) {
     Serial.println("Mode autonome actif - Pas d'envoi au serveur");
     return false;
@@ -224,8 +314,10 @@ bool sendDataToServer(const String& jsonPayload) {
     return false;
   }
 
+  // ✅ v2 : WiFiClient explicite (requis par le core ESP32 récent)
+  WiFiClient client;
   HTTPClient http;
-  http.begin(buildServerUrl("/sensor/values"));
+  http.begin(client, buildServerUrl("/sensor/values"));
   http.addHeader("Content-Type", "application/json");
   http.addHeader("x-api-key", apiKey);
 
@@ -235,11 +327,14 @@ bool sendDataToServer(const String& jsonPayload) {
     Serial.printf("POST /data - Code: %d\n", httpCode);
     if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_CREATED) {
       Serial.println("Donnees envoyees avec succes");
-      serverFailCount = 0;  // Reset du compteur en cas de succès
+      setLCDLog("Serveur OK");
+      serverFailCount = 0;
       serverConnected = true;
     }
   } else {
+    String errorMsg = "POST echec";
     Serial.printf("Erreur POST: %s\n", http.errorToString(httpCode).c_str());
+    setLCDLog(errorMsg);
     serverFailCount++;
     serverConnected = false;
     checkAutonomousMode();
@@ -249,19 +344,9 @@ bool sendDataToServer(const String& jsonPayload) {
   return httpCode > 0;
 }
 
-void checkAutonomousMode() {
-  if (serverFailCount >= MAX_SERVER_RETRIES && !autonomousMode) {
-    autonomousMode = true;
-    Serial.println("\n**************************************************");
-    Serial.println("* ATTENTION: Mode autonome active!               *");
-    Serial.printf("* %d tentatives de connexion echouees            *\n", MAX_SERVER_RETRIES);
-    Serial.println("* Le systeme fonctionne en mode secours          *");
-    Serial.println("**************************************************\n");
-  }
-}
+// ============== RECONNEXION PÉRIODIQUE ==============
 
 void tryReconnectToServer() {
-  // Tentative de reconnexion périodique même en mode autonome
   static unsigned long lastReconnectAttempt = 0;
   const unsigned long RECONNECT_INTERVAL = 60000;  // 1 minute
 
@@ -270,13 +355,15 @@ void tryReconnectToServer() {
     Serial.println("Tentative de reconnexion au serveur...");
 
     if (WiFi.status() == WL_CONNECTED) {
+      // ✅ v2 : WiFiClient explicite
+      WiFiClient client;
       HTTPClient http;
-      http.begin(buildServerUrl("/sensor/automation/status"));
+      http.begin(client, buildServerUrl("/sensor/automation/status"));
       int httpCode = http.GET();
 
       if (httpCode == 200) {
         Serial.println("Serveur accessible! Sortie du mode autonome.");
-        autonomousMode = false;
+        autonomousMode  = false;
         serverFailCount = 0;
         serverConnected = true;
       }
@@ -285,37 +372,40 @@ void tryReconnectToServer() {
   }
 }
 
-bool getAutomationStatus() {
-  if (WiFi.status() != WL_CONNECTED) {
-    return false;
-  }
+// ============== COMMANDES AUTOMATION ==============
 
+bool getAutomationStatus() {
+  if (WiFi.status() != WL_CONNECTED) return false;
+
+  // ✅ v2 : WiFiClient explicite
+  WiFiClient client;
   HTTPClient http;
-  http.begin(buildServerUrl("/sensor/automation/status"));
+  http.begin(client, buildServerUrl("/sensor/automation/status"));
   int httpCode = http.GET();
 
   if (httpCode == 200) {
     String response = http.getString();
     Serial.println("Status recu: " + response);
 
-    StaticJsonDocument<256> doc;
+    // ✅ v7 : JsonDocument (plus de taille à spécifier)
+    JsonDocument doc;
     DeserializationError error = deserializeJson(doc, response);
 
     if (!error) {
-      // Fan control (true si temperature < seuil)
-      bool fanStatus = doc["fan"] | false;
-      digitalWrite(FAN_PIN, fanStatus ? HIGH : LOW);
-      fanOn = fanStatus;
-
-      // Humidifier control (true si humidite < seuil)
+      bool fanStatus   = doc["fan"]        | false;
       bool humidStatus = doc["humidifier"] | false;
+
+      digitalWrite(FAN_PIN,        fanStatus   ? HIGH : LOW);
       digitalWrite(HUMIDIFIER_PIN, humidStatus ? HIGH : LOW);
+      fanOn        = fanStatus;
       humidifierOn = humidStatus;
 
+      setLCDLog("Cmd automation");
       http.end();
       return true;
     } else {
       Serial.println("Erreur parsing JSON status");
+      setLCDLog("JSON statut err");
     }
   } else {
     Serial.printf("GET /automation/status - Erreur: %d\n", httpCode);
@@ -326,25 +416,27 @@ bool getAutomationStatus() {
 }
 
 bool getStepperCommand() {
-  if (WiFi.status() != WL_CONNECTED) {
-    return false;
-  }
+  if (WiFi.status() != WL_CONNECTED) return false;
 
+  // ✅ v2 : WiFiClient explicite
+  WiFiClient client;
   HTTPClient http;
-  http.begin(buildServerUrl("/sensor/automation/stepper"));
+  http.begin(client, buildServerUrl("/sensor/automation/stepper"));
   int httpCode = http.GET();
 
   if (httpCode == 200) {
     String response = http.getString();
     Serial.println("Stepper recu: " + response);
 
-    StaticJsonDocument<128> doc;
+    // ✅ v7 : JsonDocument
+    JsonDocument doc;
     DeserializationError error = deserializeJson(doc, response);
 
     if (!error) {
       bool stepperStatus = doc["stepper"] | false;
       if (stepperStatus) {
         Serial.println("Rotation stepper activee");
+        setLCDLog("Stepper ON");
         stepper.moveTo(stepper.currentPosition() + 200);
         stepper.setSpeed(100);
       }
@@ -352,6 +444,7 @@ bool getStepperCommand() {
       return true;
     } else {
       Serial.println("Erreur parsing JSON stepper");
+      setLCDLog("JSON stepper err");
     }
   } else {
     Serial.printf("GET /automation/stepper - Erreur: %d\n", httpCode);
@@ -361,10 +454,12 @@ bool getStepperCommand() {
   return false;
 }
 
+// ============== LOGIQUE DE SECOURS (MODE AUTONOME) ==============
+
 void applyBackupLogic(float avgTemp, float avgHumid) {
   Serial.println("Mode autonome - Logique de secours");
 
-  // Fan control: s'active si température < normale (pour distribuer la chaleur)
+  // Fan : s'active si température trop basse (distribue la chaleur)
   if (avgTemp > 0 && avgTemp < TEMP_MIN) {
     digitalWrite(FAN_PIN, HIGH);
     fanOn = true;
@@ -374,7 +469,7 @@ void applyBackupLogic(float avgTemp, float avgHumid) {
     fanOn = false;
   }
 
-  // Humidifier control: s'active si humidité < normale
+  // Humidificateur : s'active si humidité trop basse
   if (avgHumid > 0 && avgHumid < HUMIDITY_MIN) {
     digitalWrite(HUMIDIFIER_PIN, HIGH);
     humidifierOn = true;
@@ -388,25 +483,25 @@ void applyBackupLogic(float avgTemp, float avgHumid) {
 // ============== GESTION BOUTON STEPPER ==============
 
 void checkStepperButton() {
-  const unsigned long DEBOUNCE_DELAY = 200;  // Anti-rebond 200ms
+  const unsigned long DEBOUNCE_DELAY = 200;
 
-  // Lecture du bouton (INPUT_PULLUP = LOW quand pressé)
   if (digitalRead(BUTTON_STEPPER_PIN) == LOW) {
-    // Anti-rebond
     if (millis() - lastButtonPress > DEBOUNCE_DELAY) {
       lastButtonPress = millis();
-      buttonPressed = true;
+      buttonPressed   = true;
 
       Serial.println("Bouton presse - Lancement rotation stepper");
-
-      // Lancer le stepper (1 tour complet = 200 pas pour un moteur 1.8°/pas)
+      setLCDLog("Stepper manuel");
       stepper.moveTo(stepper.currentPosition() + 200);
       stepper.setSpeed(100);
     }
   }
 }
 
-void printStatus(SensorData sensors[], int count, float avgTemp, float avgHumid, int failedCount) {
+// ============== AFFICHAGE ==============
+
+void printStatus(SensorData sensors[], int count,
+                 float avgTemp, float avgHumid, int failedCount) {
   Serial.println("\n========== STATUS ==========");
   for (int i = 0; i < count; i++) {
     Serial.printf("Capteur %d: %.1f°C, %.1f%% %s\n",
@@ -416,8 +511,8 @@ void printStatus(SensorData sensors[], int count, float avgTemp, float avgHumid,
                   sensors[i].valid ? "" : "[ERREUR]");
   }
   Serial.printf("Moyenne: %.1f°C, %.1f%%\n", avgTemp, avgHumid);
-  Serial.printf("Ventilateur: %s\n", fanOn ? "ON" : "OFF");
-  Serial.printf("Humidificateur: %s\n", humidifierOn ? "ON" : "OFF");
+  Serial.printf("Ventilateur: %s\n",     fanOn        ? "ON" : "OFF");
+  Serial.printf("Humidificateur: %s\n",  humidifierOn ? "ON" : "OFF");
   Serial.printf("Capteurs defaillants: %d\n", failedCount);
   Serial.println("============================\n");
 }
@@ -425,25 +520,19 @@ void printStatus(SensorData sensors[], int count, float avgTemp, float avgHumid,
 void displayStatusOnLCD(float avgTemp, float avgHumid) {
   lcd.clear();
 
-  // Ligne 1: Temperature et Humidite moyennes
-  // Format: "T:37.5C H:45.2%" ou "T:37.5C H:45% A" (A = Autonome)
-  lcd.setCursor(0, 0);
-  lcd.print("T:");
-  lcd.print(avgTemp, 1);
-  lcd.print("C H:");
-  lcd.print(avgHumid, 0);  // 0 décimale pour laisser place au mode
-  lcd.print("%");
+  // Ligne 1 : T:37.5C H:45%  (+ "A" si mode autonome)
+  String line1 = "T:" + String(avgTemp, 1) + "C H:" + String((int)avgHumid) + "%";
   if (autonomousMode) {
-    lcd.print(" A");  // Indicateur mode autonome
+    if (line1.length() < LCD_COLS - 2) {
+      line1 += " A";
+    } else {
+      line1 = line1.substring(0, LCD_COLS - 2) + " A";
+    }
   }
+  printLCDLine(0, line1);
 
-  // Ligne 2: Etat Fan et Humidificateur
-  // Format: "Fan:ON  Hum:OFF"
-  lcd.setCursor(0, 1);
-  lcd.print("Fan:");
-  lcd.print(fanOn ? "ON " : "OFF");
-  lcd.print(" Hum:");
-  lcd.print(humidifierOn ? "ON" : "OFF");
+  // Ligne 2 : message de log courant
+  printLCDLine(1, getCurrentLCDLog());
 }
 
 // ============== SETUP ==============
@@ -452,41 +541,36 @@ void setup() {
   Serial.begin(115200);
   delay(2000);
 
-  Serial.println("\n=== ESP32 Sensor Controller ===\n");
+  Serial.println("\n=== ESP32 Sensor Controller v2 ===\n");
 
-  // Connect to WiFi
   connectWiFi();
 
-  // Initialize DHT sensors
   dht_1.begin();
   dht_2.begin();
   dht_3.begin();
   dht_4.begin();
 
-  // Initialize stepper motor
   stepper.setMaxSpeed(300);
   stepper.setAcceleration(1000);
 
-  // Initialize output pins
-  pinMode(FAN_PIN, OUTPUT);
+  pinMode(FAN_PIN,        OUTPUT);
   pinMode(HUMIDIFIER_PIN, OUTPUT);
-  digitalWrite(FAN_PIN, LOW);
+  digitalWrite(FAN_PIN,        LOW);
   digitalWrite(HUMIDIFIER_PIN, LOW);
 
-  // Initialize status LEDs
   initLEDs();
-  digitalWrite(LED_BLUE_PIN, HIGH);  // LED bleue pendant l'initialisation
+  digitalWrite(LED_BLUE_PIN, HIGH);  // LED bleue pendant l'init
 
-  // Initialize stepper button (with internal pull-up)
   pinMode(BUTTON_STEPPER_PIN, INPUT_PULLUP);
+  pinMode(BUTTON_LCD_SCROLL_PIN, INPUT_PULLUP);
 
-  // Initialize LCD
   lcd.init();
   lcd.backlight();
   lcd.setCursor(0, 0);
-  lcd.print("ESP32 Sensor");
+  lcd.print("ESP32 Sensor v2");
   lcd.setCursor(0, 1);
   lcd.print("Initializing...");
+  setLCDLog("Initializing...");
 
   Serial.println("Initialisation terminee\n");
 }
@@ -494,83 +578,90 @@ void setup() {
 // ============== LOOP ==============
 
 void loop() {
-  // Reconnect WiFi if disconnected
-  if (WiFi.status() != WL_CONNECTED) {
+  static unsigned long lastSendTime = 0;
+  unsigned long now = millis();
+
+  if (WiFi.status() != WL_CONNECTED && now - lastSendTime >= SEND_INTERVAL) {
     connectWiFi();
   }
 
-  // Read all sensors
-  SensorData sensors[4];
-  sensors[0] = readSensor(dht_1, 1);
-  sensors[1] = readSensor(dht_2, 2);
-  sensors[2] = readSensor(dht_3, 3);
-  sensors[3] = readSensor(dht_4, 4);
+  if (now - lastSendTime >= SEND_INTERVAL) {
+    lastSendTime = now;
 
-  // Calculate averages
-  float avgTemperature, avgHumidity;
-  int numFailedSensors;
+    // Lecture des 4 capteurs
+    SensorData sensors[4];
+    sensors[0] = readSensor(dht_1, 1);
+    sensors[1] = readSensor(dht_2, 2);
+    sensors[2] = readSensor(dht_3, 3);
+    sensors[3] = readSensor(dht_4, 4);
+
+  // Calcul des moyennes
   calculateAverages(sensors, 4, avgTemperature, avgHumidity, numFailedSensors);
 
-  // Build JSON payload
-  StaticJsonDocument<1024> payload;
+  // Construction du payload JSON
+  // ✅ v7 : JsonDocument (auto-alloué depuis le heap, pas de taille fixe)
+  JsonDocument payload;
 
   for (int i = 0; i < 4; i++) {
     String sensorKey = "sensor_" + String(i + 1);
     payload[sensorKey]["temperature"] = sensors[i].temperature;
-    payload[sensorKey]["humidity"] = sensors[i].humidity;
-    payload[sensorKey]["valid"] = sensors[i].valid;
+    payload[sensorKey]["humidity"]    = sensors[i].humidity;
+    payload[sensorKey]["valid"]       = sensors[i].valid;
   }
 
   payload["average_temperature"] = avgTemperature;
-  payload["average_humidity"] = avgHumidity;
-  payload["fan_status"] = fanOn ? "ON" : "OFF";
-  payload["humidifier_status"] = humidifierOn ? "ON" : "OFF";
-  payload["numFailedSensors"] = numFailedSensors;
+  payload["average_humidity"]    = avgHumidity;
+  payload["fan_status"]          = fanOn        ? "ON" : "OFF";
+  payload["humidifier_status"]   = humidifierOn ? "ON" : "OFF";
+  payload["numFailedSensors"]    = numFailedSensors;
 
   String jsonPayload;
   serializeJson(payload, jsonPayload);
 
-  // Send data to server (sauf si mode autonome)
-  bool serverSuccess = false;
+  // Envoi au serveur
+  serverSuccess = false;
   if (!autonomousMode) {
     serverSuccess = sendDataToServer(jsonPayload);
   }
 
-  // Get automation commands from server or use backup logic
+  // Commandes d'automation
   if (autonomousMode) {
-    // Mode autonome: toujours utiliser la logique de secours
     applyBackupLogic(avgTemperature, avgHumidity);
-    // Tenter une reconnexion périodique
     tryReconnectToServer();
   } else if (!getAutomationStatus()) {
     applyBackupLogic(avgTemperature, avgHumidity);
   }
 
-  // Get stepper command from server (seulement si connecté)
+  // Commande stepper serveur (seulement si connecté)
   if (!autonomousMode) {
     getStepperCommand();
   }
 
-  // Check manual stepper button
-  checkStepperButton();
-
-  // Update status LEDs
-  updateStatusLEDs(avgTemperature, avgHumidity, serverSuccess || serverConnected);
-
-  // Print status
+  // Logs Serial
   printStatus(sensors, 4, avgTemperature, avgHumidity, numFailedSensors);
   if (autonomousMode) {
     Serial.println(">>> MODE AUTONOME ACTIF <<<");
   }
+  }
 
-  // Display on LCD
+  // Bouton stepper manuel
+  checkStepperButton();
+  // Bouton de defilement manuel des logs LCD
+  checkLCDScrollButton();
+
+  // Defilement auto des logs toutes les 3 secondes
+  updateLCDScroll(now);
+
+  // LEDs de statut
+  updateStatusLEDs(avgTemperature, avgHumidity, serverSuccess || serverConnected);
+
+  // Affichage LCD
   displayStatusOnLCD(avgTemperature, avgHumidity);
 
-  // Run stepper if needed
-  while (stepper.isRunning()) {
+  // Stepper
+  if (stepper.isRunning()) {
     stepper.run();
   }
 
-  // Wait before next iteration
-  delay(SEND_INTERVAL);
+  delay(100);
 }
