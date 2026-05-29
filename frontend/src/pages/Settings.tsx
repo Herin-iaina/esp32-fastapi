@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import './Settings.css'
 import { Settings as SettingsIcon, Save, LogOut, Moon, Sun, User, Lock, LogIn } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
+import { logger } from '../utils/logger'
 
 interface IncubatorSettings {
   temperature: number
@@ -61,9 +62,11 @@ function Settings() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
+    logger.logButtonClick('Se connecter', 'Settings', { username: loginData.username })
     setLoading(true)
     setError('')
     try {
+      logger.logAPICall('POST', '/api/auth/login', 'pending')
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -77,21 +80,28 @@ function Settings() {
         login(data.username)
         localStorage.setItem('auth_token', data.access_token)
         setLoginData({ username: '', password: '' })
+        logger.logInfo('Settings', `Connexion réussie pour ${data.username}`)
+        logger.logAPICall('POST', '/api/auth/login', 'success')
       } else {
         const errorData = await response.json()
         setError(errorData.detail || 'Identifiants invalides')
+        logger.logWarn('Settings', 'Connexion échouée', { error: errorData.detail })
+        logger.logAPICall('POST', '/api/auth/login', 'failed')
       }
     } catch (err) {
       setError('Erreur de connexion')
+      logger.logError('Settings', 'Erreur lors de la connexion', err)
     } finally {
       setLoading(false)
     }
   }
 
   const handleLogout = () => {
+    logger.logButtonClick('Déconnexion', 'Settings', { username })
     const { logout } = useAppStore.getState()
     logout()
     localStorage.removeItem('auth_token')
+    logger.logInfo('Settings', 'Utilisateur déconnecté')
   }
 
   const handleChange = (key: keyof IncubatorSettings, value: any) => {
@@ -99,13 +109,17 @@ function Settings() {
   }
 
   const handleSave = async () => {
+    logger.logButtonClick('Sauvegarder les paramètres', 'Settings', { settings })
+    
     if (!isAuthenticated) {
       setError('Vous devez être connecté pour modifier les paramètres')
+      logger.logWarn('Settings', 'Tentative de sauvegarde sans authentification')
       return
     }
 
     setLoading(true)
     try {
+      logger.logAPICall('POST', '/api/parameter', 'pending')
       const response = await fetch('/api/parameter', {
         method: 'POST',
         headers: { 
@@ -117,13 +131,18 @@ function Settings() {
 
       if (response.ok) {
         setSaved(true)
+        logger.logInfo('Settings', 'Paramètres sauvegardés avec succès')
+        logger.logAPICall('POST', '/api/parameter', 'success')
         setTimeout(() => setSaved(false), 3000)
       } else {
         const errorData = await response.json()
         setError(errorData.detail || 'Erreur lors de la sauvegarde')
+        logger.logWarn('Settings', 'Erreur lors de la sauvegarde', errorData)
+        logger.logAPICall('POST', '/api/parameter', 'failed')
       }
     } catch (err) {
       setError('Erreur serveur')
+      logger.logError('Settings', 'Erreur serveur lors de la sauvegarde', err)
     } finally {
       setLoading(false)
     }
@@ -139,7 +158,10 @@ function Settings() {
         <div className="header-right">
           <button 
             className="btn-theme"
-            onClick={toggleDarkMode}
+            onClick={() => {
+              logger.logButtonClick(`Mode ${isDarkMode ? 'clair' : 'sombre'}`, 'Settings', { isDarkMode })
+              toggleDarkMode()
+            }}
             title={isDarkMode ? 'Mode clair' : 'Mode sombre'}
           >
             {isDarkMode ? <Sun size={24} /> : <Moon size={24} />}

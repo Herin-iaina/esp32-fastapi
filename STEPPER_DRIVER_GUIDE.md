@@ -248,8 +248,11 @@ Le code utilise la bibliothèque `AccelStepper` en mode **DRIVER** :
 ```cpp
 // Mode DIR/STEP (type 1)
 AccelStepper stepper(AccelStepper::DRIVER, 
-                     STEPPER_PIN_DIR,   // GPIO 12
-                     STEPPER_PIN_STEP); // GPIO 13
+                     STEPPER_PIN_STEP,  // GPIO 13
+                     STEPPER_PIN_DIR);  // GPIO 12
+
+// Important : pour un mouvement avec moveTo()+run(), utilisez setMaxSpeed() avant moveTo().
+// setSpeed() après moveTo() est ignoré par run() avec AccelStepper.
 ```
 
 ### Séquences de Contrôle
@@ -273,10 +276,13 @@ stepper.setAcceleration(1000);
 
 ### Après (DIR/STEP - Recommandé)
 ```cpp
-AccelStepper stepper(AccelStepper::DRIVER, STEPPER_PIN_DIR, STEPPER_PIN_STEP);
-stepper.setMaxSpeed(STEPPER_MAX_SPEED);  // Auto-configuré
+AccelStepper stepper(AccelStepper::DRIVER, STEPPER_PIN_STEP, STEPPER_PIN_DIR);
+stepper.setMaxSpeed(STEPPER_SPEED);        // Utilisé comme vitesse de déplacement
 stepper.setAcceleration(STEPPER_ACCELERATION);  // Auto-configuré
 ```
+
+// Note : lorsqu'on utilise moveTo() + run(), ne pas appeler setSpeed() après moveTo().
+// Utiliser setMaxSpeed() avant moveTo() pour fixer la vitesse de déplacement.
 
 ---
 

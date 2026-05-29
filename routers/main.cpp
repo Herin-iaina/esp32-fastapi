@@ -1,189 +1,187 @@
+
 #include <WiFi.h>
 #include <HTTPClient.h>
-#include <ArduinoJson.h>      // v7+ : JsonDocument (remplace StaticJsonDocument/DynamicJsonDocument)
+#include <ArduinoJson.h>          // v7+ : JsonDocument
 #include <AccelStepper.h>
 #include <LiquidCrystal_I2C.h>
 #include "DHT.h"
 
-// ============== CONFIGURATION ==============
+// ============================================================
+//  SÉLECTION DU DRIVER STEPPER
+// ============================================================
+#define STEPPER_DRIVER_TYPE_TB6600  1
+#define STEPPER_DRIVER_TYPE_A4988   2
+#define STEPPER_DRIVER_TYPE  STEPPER_DRIVER_TYPE_TB6600
 
-// ============== SÉLECTION DU DRIVER STEPPER ==============
-#define STEPPER_DRIVER_TYPE_TB6600 1
-#define STEPPER_DRIVER_TYPE_A4988  2
-#define STEPPER_DRIVER_TYPE STEPPER_DRIVER_TYPE_TB6600  // Changer à STEPPER_DRIVER_TYPE_A4988 pour utiliser l'autre driver
+// ============================================================
+//  DÉFINITION DES PINS
+// ============================================================
+#define DHT_SENSOR_TYPE     DHT22
+#define DHT_1_PIN_DATA      0
+#define DHT_2_PIN_DATA      2
+#define DHT_3_PIN_DATA      4
+#define DHT_4_PIN_DATA      5
 
-// Pin Definitions
-#define DHT_SENSOR_TYPE DHT22
-#define DHT_1_PIN_DATA  0
-#define DHT_2_PIN_DATA  2
-#define DHT_3_PIN_DATA  4
-#define DHT_4_PIN_DATA  5
+#define STEPPER_PIN_DIR     12
+#define STEPPER_PIN_STEP    13
+#define STEPPER_PIN_3       25    // Optionnel A4988 FULL4WIRE
+#define STEPPER_PIN_4       26    // Optionnel A4988 FULL4WIRE
+#define STEPPER_ENABLE_PIN  32    // Enable pin pour couper le courant quand le stepper est à l'arrêt
+#define STEPPER_ENABLE_ACTIVE_STATE LOW
+#define STEPPER_ENABLE_DISABLE_STATE HIGH
 
-// Stepper Motor Pins (Utilisés par TB6600 et A4988 en mode DIR/STEP)
-#define STEPPER_PIN_DIR   12  // Direction (pour TB6600 et A4988)
-#define STEPPER_PIN_STEP  13  // Step/Pulse (pour TB6600 et A4988)
+#define FAN_PIN             14
+#define HUMIDIFIER_PIN      15
 
-// Pins supplémentaires pour ULN2003 / A4988 FULL4WIRE (si nécessaire)
-#define STEPPER_PIN_3     25  // Optionnel pour A4988 FULL4WIRE
-#define STEPPER_PIN_4     26  // Optionnel pour A4988 FULL4WIRE
+#define LED_GREEN_PIN       16    // Temp + humidité dans les seuils
+#define LED_ORANGE_PIN      17    // Temp ou humidité en dessous du min
+#define LED_RED_PIN         18    // Temp ou humidité au dessus du max
+#define LED_BLUE_PIN        19    // Serveur inaccessible / mode autonome
 
-// Motor Control Pins
-#define FAN_PIN         14
-#define HUMIDIFIER_PIN  15
+#define BUTTON_STEPPER_PIN      23
+#define BUTTON_LCD_SCROLL_PIN   27    // ✅ FIX : était 25, conflit avec STEPPER_PIN_3
 
-// LED Status Pins
-#define LED_GREEN_PIN   16  // Température et humidité OK (±2%)
-#define LED_ORANGE_PIN  17  // Température ou humidité < normal
-#define LED_RED_PIN     18  // Température ou humidité > normal
-#define LED_BLUE_PIN    19  // Connexion serveur NOK
+#define LCD_ADDRESS         0x27
+#define LCD_COLS            16
+#define LCD_ROWS            2
 
-// Button Pin
-#define BUTTON_STEPPER_PIN  23  // Bouton pour lancer le stepper manuellement
-#define BUTTON_LCD_SCROLL_PIN 25  // Bouton pour defiler manuellement les logs LCD
+// ============================================================
+//  WIFI & SERVEUR
+// ============================================================
+const char* ssid       = "Airbox-AB84";
+const char* password   = "7ddd6jVJPUR-deEJbxc";
+const char* serverIP   = "192.168.1.100";
+const int   serverPort = 5000;
+const char* apiKey     = "Votre_Cle_API";
 
-// LCD I2C (adresse 0x27 par défaut, ajuster si nécessaire)
-#define LCD_ADDRESS     0x27
-#define LCD_COLS        16
-#define LCD_ROWS        2
+// ============================================================
+//  SEUILS TEMPÉRATURE / HUMIDITÉ
+// ============================================================
+const float TEMP_TARGET       = 37.7f;
+const float HUMIDITY_TARGET   = 45.0f;
+const float TOLERANCE_PERCENT = 1.5f;
 
-// WiFi credentials
-const char* ssid = "Airbox-AB84";
-const char* password = "7ddd6jVJPUR-deEJbxc";
+const float TEMP_MIN     = TEMP_TARGET     * (1.0f - TOLERANCE_PERCENT / 100.0f);
+const float TEMP_MAX     = TEMP_TARGET     * (1.0f + TOLERANCE_PERCENT / 100.0f);
+const float HUMIDITY_MIN = HUMIDITY_TARGET * (1.0f - TOLERANCE_PERCENT / 100.0f);
+const float HUMIDITY_MAX = HUMIDITY_TARGET * (1.0f + TOLERANCE_PERCENT / 100.0f);
 
-// Server configuration
-const char* serverIP = "192.168.1.100";  // Remplacer par l'IP du serveur
-const int serverPort = 5000;
-const char* apiKey = "Votre_Cle_API";
+// ============================================================
+//  TIMING & BUFFERS
+// ============================================================
+const unsigned long SEND_INTERVAL        = 5000UL;   // ms entre chaque cycle capteurs
+const unsigned long LCD_SCROLL_INTERVAL  = 3000UL;   // ms entre chaque défilement auto
+const unsigned long RECONNECT_INTERVAL   = 60000UL;  // ms entre tentatives de reconnexion
+const unsigned long WIFI_TIMEOUT         = 15000UL;  // ms max pour connexion WiFi
 
-// Thresholds
-const float TEMP_TARGET      = 37.7;
-const float HUMIDITY_TARGET  = 45.0;
-const float TOLERANCE_PERCENT = 1.5;
-
-// Seuils calculés
-const float TEMP_MIN     = TEMP_TARGET     * (1.0 - TOLERANCE_PERCENT / 100.0);  // 37.13°C
-const float TEMP_MAX     = TEMP_TARGET     * (1.0 + TOLERANCE_PERCENT / 100.0);  // 38.27°C
-const float HUMIDITY_MIN = HUMIDITY_TARGET * (1.0 - TOLERANCE_PERCENT / 100.0);  // 44.33%
-const float HUMIDITY_MAX = HUMIDITY_TARGET * (1.0 + TOLERANCE_PERCENT / 100.0);  // 45.68%
-
-// Timing
-const unsigned long SEND_INTERVAL = 5000;  // 5 secondes
-const unsigned long LCD_SCROLL_INTERVAL = 3000;  // 3 secondes pour defiler les logs
 const int LCD_LOG_BUFFER_SIZE = 6;
+const int MAX_SERVER_RETRIES  = 10;
 
-// Mode autonome
-const int MAX_SERVER_RETRIES = 10;
-
-// ============== CONFIGURATION STEPPER PAR DRIVER ==============
-// TB6600: Plus performant, steps/rotation adapté au microstep du driver
-// A4988: Flexible, speeds à ajuster selon le microstep configuré
-
+// ============================================================
+//  CONFIGURATION STEPPER
+// ============================================================
 #if STEPPER_DRIVER_TYPE == STEPPER_DRIVER_TYPE_TB6600
-  // TB6600 Configuration (DIR/STEP mode)
-  #define STEPPER_MAX_SPEED         1000    // steps/sec (plus élevé pour TB6600)
-  #define STEPPER_ACCELERATION      2000    // steps/sec²
-  #define STEPPER_STEPS_PER_ROTATION 200    // 200 steps = 1 rotation complète (1/1 microstep)
-  #define STEPPER_ROTATION_STEPS    (STEPPER_STEPS_PER_ROTATION * 5)  // 5 rotations = 1000 steps
-  #define STEPPER_SPEED             300     // Speed pour les commandes
+  #define STEPPER_MAX_SPEED          1000
+  #define STEPPER_ACCELERATION       2000
+  #define STEPPER_STEPS_PER_ROTATION  200
+  #define STEPPER_SPEED               300
   static const char* DRIVER_NAME = "TB6600 (DIR/STEP)";
 #else
-  // A4988 Configuration (DIR/STEP mode)
-  #define STEPPER_MAX_SPEED         300     // steps/sec (limité pour A4988)
-  #define STEPPER_ACCELERATION      1000    // steps/sec²
-  #define STEPPER_STEPS_PER_ROTATION 200    // 200 steps = 1 rotation (ajuster selon microstep)
-  #define STEPPER_ROTATION_STEPS    (STEPPER_STEPS_PER_ROTATION * 5)  // 5 rotations = 1000 steps
-  #define STEPPER_SPEED             100     // Speed pour les commandes
+  #define STEPPER_MAX_SPEED           300
+  #define STEPPER_ACCELERATION       1000
+  #define STEPPER_STEPS_PER_ROTATION  200
+  #define STEPPER_SPEED               100
   static const char* DRIVER_NAME = "A4988 (DIR/STEP)";
 #endif
 
-// ============== OBJETS GLOBAUX ==============
+#define STEPPER_ROTATION_STEPS  (STEPPER_STEPS_PER_ROTATION * 5)
 
+// ============================================================
+//  OBJETS GLOBAUX
+// ============================================================
 DHT dht_1(DHT_1_PIN_DATA, DHT_SENSOR_TYPE);
 DHT dht_2(DHT_2_PIN_DATA, DHT_SENSOR_TYPE);
 DHT dht_3(DHT_3_PIN_DATA, DHT_SENSOR_TYPE);
 DHT dht_4(DHT_4_PIN_DATA, DHT_SENSOR_TYPE);
 
-// Configuration du stepper en mode DIR/STEP (compatible TB6600 et A4988)
-// AccelStepper::DRIVER (type 1) utilise DIR et STEP pins
-AccelStepper stepper(AccelStepper::DRIVER, STEPPER_PIN_DIR, STEPPER_PIN_STEP);
+AccelStepper stepper(AccelStepper::DRIVER, STEPPER_PIN_STEP, STEPPER_PIN_DIR);
+//                                                       ^^^^        ^^^
+// AccelStepper::DRIVER → (STEP, DIR) — ordre important !
 
 LiquidCrystal_I2C lcd(LCD_ADDRESS, LCD_COLS, LCD_ROWS);
 
-// ============== VARIABLES D'ÉTAT ==============
+// ============================================================
+//  STRUCTURES DE DONNÉES
+// ============================================================
+struct SensorData {
+  float temperature = 0.0f;
+  float humidity    = 0.0f;
+  bool  valid       = false;
+};
 
-bool fanOn          = false;
-bool humidifierOn   = false;
-bool autonomousMode = false;
-int  serverFailCount = 0;
-bool serverConnected = false;
-bool buttonPressed   = false;
-unsigned long lastButtonPress = 0;
+// ============================================================
+//  VARIABLES D'ÉTAT GLOBALES
+// ============================================================
+bool  fanOn           = false;
+bool  humidifierOn    = false;
+bool  autonomousMode  = false;
+bool  serverConnected = false;
+bool  serverSuccess   = false;
+int   serverFailCount = 0;
 
-String lcdLogBuffer[LCD_LOG_BUFFER_SIZE];
-int lcdLogCount = 0;
-int lcdLogIndex = 0;
-unsigned long lastLogScroll = 0;
+float avgTemperature  = 0.0f;
+float avgHumidity     = 0.0f;
+int   numFailedSensors = 0;
+bool  stepperEnabled   = false;
+
+// Boutons
+unsigned long lastButtonPress       = 0;
 unsigned long lastScrollButtonPress = 0;
 
-float avgTemperature = 0;
-float avgHumidity = 0;
-int numFailedSensors = 0;
-bool serverSuccess = false;
+// LCD log ring buffer
+String lcdLogBuffer[LCD_LOG_BUFFER_SIZE];
+int    lcdLogCount = 0;
+int    lcdLogIndex = 0;
+unsigned long lastLogScroll = 0;
 
-struct SensorData {
-  float temperature;
-  float humidity;
-  bool  valid;
-};
+// ============================================================
+//  UTILITAIRES LCD LOG
+// ============================================================
 
 void printLCDLine(int row, const String& line) {
   lcd.setCursor(0, row);
   lcd.print(line);
-  for (int i = line.length(); i < LCD_COLS; i++) {
-    lcd.print(' ');
-  }
+  // Efface le reste de la ligne sans lcd.clear() → évite le scintillement
+  for (int i = line.length(); i < LCD_COLS; i++) lcd.print(' ');
 }
 
 void pushLCDLog(const String& msg) {
-  String text = msg;
-  if (text.length() > LCD_COLS) {
-    text = text.substring(0, LCD_COLS);
-  }
-  if (lcdLogCount > 0 && lcdLogBuffer[lcdLogCount - 1] == text) {
-    return;
-  }
+  String text = (msg.length() > LCD_COLS) ? msg.substring(0, LCD_COLS) : msg;
+  // Déduplique les messages consécutifs identiques
+  if (lcdLogCount > 0 && lcdLogBuffer[(lcdLogCount - 1) % LCD_LOG_BUFFER_SIZE] == text) return;
+
   if (lcdLogCount < LCD_LOG_BUFFER_SIZE) {
     lcdLogBuffer[lcdLogCount++] = text;
   } else {
+    // Décale le buffer (FIFO circulaire)
     for (int i = 0; i < LCD_LOG_BUFFER_SIZE - 1; i++) {
       lcdLogBuffer[i] = lcdLogBuffer[i + 1];
     }
     lcdLogBuffer[LCD_LOG_BUFFER_SIZE - 1] = text;
-    if (lcdLogIndex > 0) {
-      lcdLogIndex--;
-    }
+    if (lcdLogIndex > 0) lcdLogIndex--;
   }
 }
 
+void setLCDLog(const String& msg) { pushLCDLog(msg); }
+
 String getCurrentLCDLog() {
-  if (lcdLogCount == 0) {
-    return "";
-  }
-  if (lcdLogIndex >= lcdLogCount) {
-    lcdLogIndex = 0;
-  }
+  if (lcdLogCount == 0) return "";
+  if (lcdLogIndex >= lcdLogCount) lcdLogIndex = 0;
   return lcdLogBuffer[lcdLogIndex];
 }
 
-void setLCDLog(const String& msg) {
-  pushLCDLog(msg);
-}
-
 void advanceLCDLog() {
-  if (lcdLogCount <= 1) {
-    return;
-  }
-  lcdLogIndex = (lcdLogIndex + 1) % lcdLogCount;
+  if (lcdLogCount > 1) lcdLogIndex = (lcdLogIndex + 1) % lcdLogCount;
 }
 
 void updateLCDScroll(unsigned long now) {
@@ -193,98 +191,270 @@ void updateLCDScroll(unsigned long now) {
   }
 }
 
-void checkLCDScrollButton() {
-  const unsigned long DEBOUNCE_DELAY = 200;
-  if (digitalRead(BUTTON_LCD_SCROLL_PIN) == LOW) {
-    if (millis() - lastScrollButtonPress > DEBOUNCE_DELAY) {
-      lastScrollButtonPress = millis();
-      Serial.println("Bouton LCD presse - defilement manuel");
-      advanceLCDLog();
-    }
+// ============================================================
+//  AFFICHAGE LCD
+// ============================================================
+
+void displayStatusOnLCD(float avgTemp, float avgHumid) {
+  // Ligne 1 : "T:37.5C H:45%" + " A" si mode autonome
+  String line1 = "T:" + String(avgTemp, 1) + "C H:" + String((int)avgHumid) + "%";
+  if (autonomousMode) {
+    if ((int)line1.length() <= LCD_COLS - 2)
+      line1 += " A";
+    else
+      line1 = line1.substring(0, LCD_COLS - 2) + " A";
   }
+  printLCDLine(0, line1);
+  // Ligne 2 : log courant
+  printLCDLine(1, getCurrentLCDLog());
 }
 
-// ============== FONCTIONS UTILITAIRES ==============
+// ============================================================
+//  WIFI — CONNEXION NON-BLOQUANTE
+// ============================================================
 
 void connectWiFi() {
-  Serial.print("Connexion WiFi");
+  if (WiFi.status() == WL_CONNECTED) return;
+
+  Serial.print("Connexion WiFi...");
   WiFi.begin(ssid, password);
 
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-    delay(1000);
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_TIMEOUT) {
+    delay(500);
     Serial.print(".");
-    attempts++;
   }
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nConnecte au WiFi");
-    Serial.print("IP: ");
-    Serial.println(WiFi.localIP());
+    Serial.println("\nConnecte — IP: " + WiFi.localIP().toString());
     setLCDLog("WiFi connecte");
   } else {
-    Serial.println("\nEchec connexion WiFi - Mode autonome");
+    Serial.println("\nEchec WiFi");
     setLCDLog("WiFi echec");
   }
 }
 
-SensorData readSensor(DHT& dht, int sensorNum) {
+// ============================================================
+//  UTILITAIRES SERVEUR
+// ============================================================
+
+String buildServerUrl(const char* endpoint) {
+  return String("http://") + serverIP + ":" + serverPort + endpoint;
+}
+
+void checkAutonomousMode() {
+  if (!autonomousMode && serverFailCount >= MAX_SERVER_RETRIES) {
+    autonomousMode = true;
+    Serial.println("\n*** MODE AUTONOME ACTIVE ***");
+    Serial.printf("  %d echecs consecutifs\n", MAX_SERVER_RETRIES);
+    setLCDLog("Mode autonome");
+  }
+}
+
+// ============================================================
+//  ENVOI DES DONNÉES
+// ============================================================
+
+bool sendDataToServer(const String& jsonPayload) {
+  if (autonomousMode || WiFi.status() != WL_CONNECTED) {
+    if (!autonomousMode) { serverFailCount++; checkAutonomousMode(); }
+    return false;
+  }
+
+  WiFiClient wifiClient;
+  HTTPClient http;
+  http.begin(wifiClient, buildServerUrl("/sensor/values"));
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("x-api-key", apiKey);
+
+  int code = http.POST(jsonPayload);
+  bool success = false;
+
+  if (code > 0) {
+    Serial.printf("POST /sensor/values → %d\n", code);
+    // ✅ FIX : succès uniquement sur 200 ou 201 (pas sur les 4xx/5xx)
+    if (code == HTTP_CODE_OK || code == HTTP_CODE_CREATED) {
+      setLCDLog("Serveur OK");
+      serverFailCount = 0;
+      serverConnected = true;
+      success = true;
+    } else {
+      Serial.printf("Reponse inattendue: %d\n", code);
+      setLCDLog("Serveur err " + String(code));
+      serverFailCount++;
+      serverConnected = false;
+      checkAutonomousMode();
+    }
+  } else {
+    Serial.printf("POST echec: %s\n", http.errorToString(code).c_str());
+    setLCDLog("POST echec");
+    serverFailCount++;
+    serverConnected = false;
+    checkAutonomousMode();
+  }
+
+  http.end();
+  return success;
+}
+
+// ============================================================
+//  RECONNEXION PÉRIODIQUE (mode autonome)
+// ============================================================
+
+void tryReconnectToServer() {
+  static unsigned long lastReconnectAttempt = 0;
+  if (!autonomousMode) return;
+  if (millis() - lastReconnectAttempt < RECONNECT_INTERVAL) return;
+
+  lastReconnectAttempt = millis();
+  if (WiFi.status() != WL_CONNECTED) { connectWiFi(); return; }
+
+  Serial.println("Tentative de reconnexion au serveur...");
+  WiFiClient wifiClient;
+  HTTPClient http;
+  http.begin(wifiClient, buildServerUrl("/sensor/automation/status"));
+  int code = http.GET();
+  http.end();
+
+  if (code == HTTP_CODE_OK) {
+    Serial.println("Serveur accessible — sortie du mode autonome");
+    autonomousMode  = false;
+    serverFailCount = 0;
+    serverConnected = true;
+    setLCDLog("Serveur retrouve");
+  }
+}
+
+// ============================================================
+//  COMMANDES AUTOMATION
+// ============================================================
+
+bool getAutomationStatus() {
+  if (autonomousMode || WiFi.status() != WL_CONNECTED) return false;
+
+  WiFiClient wifiClient;
+  HTTPClient http;
+  http.begin(wifiClient, buildServerUrl("/sensor/automation/status"));
+  int code = http.GET();
+
+  if (code == HTTP_CODE_OK) {
+    String response = http.getString();
+    JsonDocument doc;
+    if (!deserializeJson(doc, response)) {
+      bool fanCmd   = doc["fan"]        | false;
+      bool humidCmd = doc["humidifier"] | false;
+      digitalWrite(FAN_PIN,        fanCmd   ? HIGH : LOW);
+      digitalWrite(HUMIDIFIER_PIN, humidCmd ? HIGH : LOW);
+      fanOn        = fanCmd;
+      humidifierOn = humidCmd;
+      setLCDLog("Cmd automation");
+      http.end();
+      return true;
+    }
+    Serial.println("JSON status: erreur parsing");
+    setLCDLog("JSON statut err");
+  } else {
+    Serial.printf("GET /automation/status → %d\n", code);
+  }
+
+  http.end();
+  return false;
+}
+
+bool getStepperCommand() {
+  if (autonomousMode || WiFi.status() != WL_CONNECTED) return false;
+
+  WiFiClient wifiClient;
+  HTTPClient http;
+  http.begin(wifiClient, buildServerUrl("/sensor/automation/stepper"));
+  int code = http.GET();
+
+  if (code == HTTP_CODE_OK) {
+    String response = http.getString();
+    JsonDocument doc;
+    if (!deserializeJson(doc, response)) {
+      if (doc["stepper"] | false) {
+        Serial.println("Rotation stepper activee (serveur)");
+        setLCDLog("Stepper ON");
+        stepper.setMaxSpeed(STEPPER_SPEED);
+        enableStepper();
+        stepper.moveTo(stepper.currentPosition() + STEPPER_ROTATION_STEPS);
+      }
+      http.end();
+      return true;
+    }
+    Serial.println("JSON stepper: erreur parsing");
+    setLCDLog("JSON stepper err");
+  } else {
+    Serial.printf("GET /automation/stepper → %d\n", code);
+  }
+
+  http.end();
+  return false;
+}
+
+// ============================================================
+//  LOGIQUE DE SECOURS (MODE AUTONOME)
+// ============================================================
+
+void applyBackupLogic(float avgTemp, float avgHumid) {
+  // Ventilateur : distribue la chaleur si température trop basse
+  bool fan = (avgTemp > 0.0f && avgTemp < TEMP_MIN);
+  digitalWrite(FAN_PIN, fan ? HIGH : LOW);
+  fanOn = fan;
+  if (fan) Serial.println("[AUTO] Fan ON — temp basse");
+
+  // Humidificateur : s'active si humidité insuffisante
+  bool humid = (avgHumid > 0.0f && avgHumid < HUMIDITY_MIN);
+  digitalWrite(HUMIDIFIER_PIN, humid ? HIGH : LOW);
+  humidifierOn = humid;
+  if (humid) Serial.println("[AUTO] Humidificateur ON — humidite basse");
+}
+
+// ============================================================
+//  CAPTEURS DHT
+// ============================================================
+
+SensorData readSensor(DHT& dht, int num) {
   SensorData data;
   data.humidity    = dht.readHumidity();
   data.temperature = dht.readTemperature();
   data.valid       = !isnan(data.humidity) && !isnan(data.temperature);
-
   if (!data.valid) {
-    Serial.printf("Capteur %d: ERREUR de lecture\n", sensorNum);
-    data.temperature = 0;
-    data.humidity    = 0;
+    Serial.printf("Capteur %d: ERREUR\n", num);
+    data.temperature = 0.0f;
+    data.humidity    = 0.0f;
   }
-
   return data;
 }
 
 void calculateAverages(SensorData sensors[], int count,
                        float& avgTemp, float& avgHumid, int& failedCount) {
-  float totalTemp  = 0;
-  float totalHumid = 0;
-  int   validCount = 0;
-  failedCount = 0;
+  float tTotal = 0, hTotal = 0;
+  int   valid  = 0;
+  failedCount  = 0;
 
   for (int i = 0; i < count; i++) {
     if (sensors[i].valid) {
-      totalTemp  += sensors[i].temperature;
-      totalHumid += sensors[i].humidity;
-      validCount++;
+      tTotal += sensors[i].temperature;
+      hTotal += sensors[i].humidity;
+      valid++;
     } else {
       failedCount++;
     }
   }
 
-  if (validCount > 0) {
-    avgTemp  = totalTemp  / validCount;
-    avgHumid = totalHumid / validCount;
-  } else {
-    avgTemp  = 0;
-    avgHumid = 0;
-  }
+  avgTemp  = valid > 0 ? tTotal / valid : 0.0f;
+  avgHumid = valid > 0 ? hTotal / valid : 0.0f;
 }
 
-String buildServerUrl(const char* endpoint) {
-  return String("http://") + serverIP + ":" + String(serverPort) + endpoint;
-}
-
-// ============== FONCTIONS LED STATUS ==============
+// ============================================================
+//  LEDs DE STATUT
+// ============================================================
 
 void initLEDs() {
-  pinMode(LED_GREEN_PIN,  OUTPUT);
-  pinMode(LED_ORANGE_PIN, OUTPUT);
-  pinMode(LED_RED_PIN,    OUTPUT);
-  pinMode(LED_BLUE_PIN,   OUTPUT);
-
-  digitalWrite(LED_GREEN_PIN,  LOW);
-  digitalWrite(LED_ORANGE_PIN, LOW);
-  digitalWrite(LED_RED_PIN,    LOW);
-  digitalWrite(LED_BLUE_PIN,   LOW);
+  const int pins[] = { LED_GREEN_PIN, LED_ORANGE_PIN, LED_RED_PIN, LED_BLUE_PIN };
+  for (int p : pins) { pinMode(p, OUTPUT); digitalWrite(p, LOW); }
 }
 
 void setAllLEDsOff() {
@@ -297,408 +467,215 @@ void setAllLEDsOff() {
 void updateStatusLEDs(float avgTemp, float avgHumid, bool serverOk) {
   setAllLEDsOff();
 
-  // LED Bleue : connexion serveur NOK
-  if (!serverOk || autonomousMode) {
-    digitalWrite(LED_BLUE_PIN, HIGH);
-  }
+  if (!serverOk || autonomousMode)  digitalWrite(LED_BLUE_PIN, HIGH);
+  if (avgTemp <= 0 || avgHumid <= 0) { digitalWrite(LED_RED_PIN, HIGH); return; }
 
-  // Pas de données valides → LED rouge
-  if (avgTemp <= 0 || avgHumid <= 0) {
-    digitalWrite(LED_RED_PIN, HIGH);
-    return;
-  }
-
-  bool tempOk   = (avgTemp  >= TEMP_MIN     && avgTemp  <= TEMP_MAX);
-  bool humidOk  = (avgHumid >= HUMIDITY_MIN && avgHumid <= HUMIDITY_MAX);
-  bool tempHigh = (avgTemp  > TEMP_MAX);
-  bool humidHigh= (avgHumid > HUMIDITY_MAX);
-  bool tempLow  = (avgTemp  < TEMP_MIN);
-  bool humidLow = (avgHumid < HUMIDITY_MIN);
+  bool tempOk  = avgTemp  >= TEMP_MIN     && avgTemp  <= TEMP_MAX;
+  bool humidOk = avgHumid >= HUMIDITY_MIN && avgHumid <= HUMIDITY_MAX;
 
   if (tempOk && humidOk) {
     digitalWrite(LED_GREEN_PIN, HIGH);
-  } else if (tempHigh || humidHigh) {
+  } else if (avgTemp > TEMP_MAX || avgHumid > HUMIDITY_MAX) {
     digitalWrite(LED_RED_PIN, HIGH);
-  } else if (tempLow || humidLow) {
+  } else {
     digitalWrite(LED_ORANGE_PIN, HIGH);
   }
 }
 
-// ============== ENVOI DONNÉES SERVEUR ==============
-
-void checkAutonomousMode() {
-  if (serverFailCount >= MAX_SERVER_RETRIES && !autonomousMode) {
-    autonomousMode = true;
-    Serial.println("\n**************************************************");
-    Serial.println("* ATTENTION: Mode autonome active!               *");
-    Serial.printf( "* %d tentatives de connexion echouees            *\n", MAX_SERVER_RETRIES);
-    Serial.println("* Le systeme fonctionne en mode secours          *");
-    Serial.println("**************************************************\n");
-    setLCDLog("Mode autonome");
+void enableStepper() {
+  if (!stepperEnabled) {
+    digitalWrite(STEPPER_ENABLE_PIN, STEPPER_ENABLE_ACTIVE_STATE);
+    stepperEnabled = true;
   }
 }
 
-bool sendDataToServer(const String& jsonPayload) {
-  if (autonomousMode) {
-    Serial.println("Mode autonome actif - Pas d'envoi au serveur");
-    return false;
-  }
-
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi non connecte");
-    serverFailCount++;
-    checkAutonomousMode();
-    return false;
-  }
-
-  // ✅ v2 : WiFiClient explicite (requis par le core ESP32 récent)
-  WiFiClient client;
-  HTTPClient http;
-  http.begin(client, buildServerUrl("/sensor/values"));
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("x-api-key", apiKey);
-
-  int httpCode = http.POST(jsonPayload);
-
-  if (httpCode > 0) {
-    Serial.printf("POST /data - Code: %d\n", httpCode);
-    if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_CREATED) {
-      Serial.println("Donnees envoyees avec succes");
-      setLCDLog("Serveur OK");
-      serverFailCount = 0;
-      serverConnected = true;
-    }
-  } else {
-    String errorMsg = "POST echec";
-    Serial.printf("Erreur POST: %s\n", http.errorToString(httpCode).c_str());
-    setLCDLog(errorMsg);
-    serverFailCount++;
-    serverConnected = false;
-    checkAutonomousMode();
-  }
-
-  http.end();
-  return httpCode > 0;
-}
-
-// ============== RECONNEXION PÉRIODIQUE ==============
-
-void tryReconnectToServer() {
-  static unsigned long lastReconnectAttempt = 0;
-  const unsigned long RECONNECT_INTERVAL = 60000;  // 1 minute
-
-  if (autonomousMode && (millis() - lastReconnectAttempt > RECONNECT_INTERVAL)) {
-    lastReconnectAttempt = millis();
-    Serial.println("Tentative de reconnexion au serveur...");
-
-    if (WiFi.status() == WL_CONNECTED) {
-      // ✅ v2 : WiFiClient explicite
-      WiFiClient client;
-      HTTPClient http;
-      http.begin(client, buildServerUrl("/sensor/automation/status"));
-      int httpCode = http.GET();
-
-      if (httpCode == 200) {
-        Serial.println("Serveur accessible! Sortie du mode autonome.");
-        autonomousMode  = false;
-        serverFailCount = 0;
-        serverConnected = true;
-      }
-      http.end();
-    }
+void disableStepper() {
+  if (stepperEnabled) {
+    digitalWrite(STEPPER_ENABLE_PIN, STEPPER_ENABLE_DISABLE_STATE);
+    stepperEnabled = false;
   }
 }
 
-// ============== COMMANDES AUTOMATION ==============
-
-bool getAutomationStatus() {
-  if (WiFi.status() != WL_CONNECTED) return false;
-
-  // ✅ v2 : WiFiClient explicite
-  WiFiClient client;
-  HTTPClient http;
-  http.begin(client, buildServerUrl("/sensor/automation/status"));
-  int httpCode = http.GET();
-
-  if (httpCode == 200) {
-    String response = http.getString();
-    Serial.println("Status recu: " + response);
-
-    // ✅ v7 : JsonDocument (plus de taille à spécifier)
-    JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, response);
-
-    if (!error) {
-      bool fanStatus   = doc["fan"]        | false;
-      bool humidStatus = doc["humidifier"] | false;
-
-      digitalWrite(FAN_PIN,        fanStatus   ? HIGH : LOW);
-      digitalWrite(HUMIDIFIER_PIN, humidStatus ? HIGH : LOW);
-      fanOn        = fanStatus;
-      humidifierOn = humidStatus;
-
-      setLCDLog("Cmd automation");
-      http.end();
-      return true;
-    } else {
-      Serial.println("Erreur parsing JSON status");
-      setLCDLog("JSON statut err");
-    }
-  } else {
-    Serial.printf("GET /automation/status - Erreur: %d\n", httpCode);
-  }
-
-  http.end();
-  return false;
-}
-
-bool getStepperCommand() {
-  if (WiFi.status() != WL_CONNECTED) return false;
-
-  // ✅ v2 : WiFiClient explicite
-  WiFiClient client;
-  HTTPClient http;
-  http.begin(client, buildServerUrl("/sensor/automation/stepper"));
-  int httpCode = http.GET();
-
-  if (httpCode == 200) {
-    String response = http.getString();
-    Serial.println("Stepper recu: " + response);
-
-    // ✅ v7 : JsonDocument
-    JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, response);
-
-    if (!error) {
-      bool stepperStatus = doc["stepper"] | false;
-      if (stepperStatus) {
-        Serial.println("Rotation stepper activee");
-        setLCDLog("Stepper ON");
-        stepper.moveTo(stepper.currentPosition() + STEPPER_ROTATION_STEPS);
-        stepper.setSpeed(STEPPER_SPEED);
-      }
-      http.end();
-      return true;
-    } else {
-      Serial.println("Erreur parsing JSON stepper");
-      setLCDLog("JSON stepper err");
-    }
-  } else {
-    Serial.printf("GET /automation/stepper - Erreur: %d\n", httpCode);
-  }
-
-  http.end();
-  return false;
-}
-
-// ============== LOGIQUE DE SECOURS (MODE AUTONOME) ==============
-
-void applyBackupLogic(float avgTemp, float avgHumid) {
-  Serial.println("Mode autonome - Logique de secours");
-
-  // Fan : s'active si température trop basse (distribue la chaleur)
-  if (avgTemp > 0 && avgTemp < TEMP_MIN) {
-    digitalWrite(FAN_PIN, HIGH);
-    fanOn = true;
-    Serial.println("Fan ON - Temperature basse, distribution chaleur");
-  } else {
-    digitalWrite(FAN_PIN, LOW);
-    fanOn = false;
-  }
-
-  // Humidificateur : s'active si humidité trop basse
-  if (avgHumid > 0 && avgHumid < HUMIDITY_MIN) {
-    digitalWrite(HUMIDIFIER_PIN, HIGH);
-    humidifierOn = true;
-    Serial.println("Humidificateur ON - Humidite basse");
-  } else {
-    digitalWrite(HUMIDIFIER_PIN, LOW);
-    humidifierOn = false;
-  }
-}
-
-// ============== GESTION BOUTON STEPPER ==============
+// ============================================================
+//  BOUTONS
+// ============================================================
 
 void checkStepperButton() {
-  const unsigned long DEBOUNCE_DELAY = 200;
-
-  if (digitalRead(BUTTON_STEPPER_PIN) == LOW) {
-    if (millis() - lastButtonPress > DEBOUNCE_DELAY) {
-      lastButtonPress = millis();
-      buttonPressed   = true;
-
-      Serial.println("Bouton presse - Lancement rotation stepper");
-      setLCDLog("Stepper manuel");
-      stepper.moveTo(stepper.currentPosition() + STEPPER_ROTATION_STEPS);
-      stepper.setSpeed(STEPPER_SPEED);
-    }
+  const unsigned long DEBOUNCE = 200;
+  if (digitalRead(BUTTON_STEPPER_PIN) == LOW && millis() - lastButtonPress > DEBOUNCE) {
+    lastButtonPress = millis();
+    Serial.println("Bouton stepper — rotation manuelle");
+    setLCDLog("Stepper manuel");
+    stepper.setMaxSpeed(STEPPER_SPEED);
+    enableStepper();
+    stepper.moveTo(stepper.currentPosition() + STEPPER_ROTATION_STEPS);
   }
 }
 
-// ============== AFFICHAGE ==============
+void checkLCDScrollButton() {
+  const unsigned long DEBOUNCE = 200;
+  if (digitalRead(BUTTON_LCD_SCROLL_PIN) == LOW && millis() - lastScrollButtonPress > DEBOUNCE) {
+    lastScrollButtonPress = millis();
+    Serial.println("Bouton LCD — defilement manuel");
+    advanceLCDLog();
+  }
+}
 
-void printStatus(SensorData sensors[], int count,
-                 float avgTemp, float avgHumid, int failedCount) {
+// ============================================================
+//  LOGS SÉRIE
+// ============================================================
+
+void printStatus(SensorData sensors[], int count, float avgTemp, float avgHumid, int failed) {
   Serial.println("\n========== STATUS ==========");
-  Serial.printf("Capteur 1: %.1f°C, %.1f%%\n", sensors[0].temperature, sensors[0].humidity);
-  Serial.printf("Capteur 2: %.1f°C, %.1f%%\n", sensors[1].temperature, sensors[1].humidity);
-  Serial.printf("Capteur 3: %.1f°C, %.1f%%\n", sensors[2].temperature, sensors[2].humidity);
-  Serial.printf("Capteur 4: %.1f°C, %.1f%%\n", sensors[3].temperature, sensors[3].humidity);
-  Serial.printf("Moyenne: %.1f°C, %.1f%%\n", avgTemp, avgHumid);
-  Serial.printf("Ventilateur: %s\n",    fanOn        ? "ON" : "OFF");
-  Serial.printf("Humidificateur: %s\n", humidifierOn ? "ON" : "OFF");
-  Serial.printf("Capteurs defaillants: %d\n", failedCount);
+  for (int i = 0; i < count; i++) {
+    Serial.printf("  Capteur %d: %.1f°C, %.1f%% %s\n",
+                  i + 1,
+                  sensors[i].temperature,
+                  sensors[i].humidity,
+                  sensors[i].valid ? "" : "[ERREUR]");
+  }
+  Serial.printf("  Moyenne   : %.2f°C, %.2f%%\n", avgTemp, avgHumid);
+  Serial.printf("  Seuils    : T [%.2f–%.2f]  H [%.2f–%.2f]\n",
+                TEMP_MIN, TEMP_MAX, HUMIDITY_MIN, HUMIDITY_MAX);
+  Serial.printf("  Fan: %s  |  Humidif: %s  |  Defauts: %d\n",
+                fanOn ? "ON" : "OFF", humidifierOn ? "ON" : "OFF", failed);
+  if (autonomousMode) Serial.println("  >>> MODE AUTONOME ACTIF <<<");
   Serial.println("============================\n");
 }
 
-void displayStatusOnLCD(float avgTemp, float avgHumid) {
-  lcd.clear();
-
-  // Ligne 1 : T:37.5C H:45%  (+ "A" si mode autonome)
-  String line1 = "T:" + String(avgTemp, 1) + "C H:" + String((int)avgHumid) + "%";
-  if (autonomousMode) {
-    if (line1.length() < LCD_COLS - 2) {
-      line1 += " A";
-    } else {
-      line1 = line1.substring(0, LCD_COLS - 2) + " A";
-    }
-  }
-  printLCDLine(0, line1);
-
-  // Ligne 2 : message de log courant
-  printLCDLine(1, getCurrentLCDLog());
-}
-
-// ============== SETUP ==============
+// ============================================================
+//  SETUP
+// ============================================================
 
 void setup() {
   Serial.begin(115200);
-  delay(2000);
+  delay(1500);
 
-  Serial.println("\n=== ESP32 Sensor Controller v2 ===\n");
-  Serial.printf("Stepper Driver: %s\n", DRIVER_NAME);
-  Serial.printf("Max Speed: %d steps/sec\n", STEPPER_MAX_SPEED);
-  Serial.printf("Acceleration: %d steps/sec²\n", STEPPER_ACCELERATION);
+  Serial.println("\n=== ESP32 Sensor Controller v3 ===");
+  Serial.printf("Driver : %s\n", DRIVER_NAME);
+  Serial.printf("Vitesse: %d sps  |  Accel: %d sps²\n", STEPPER_MAX_SPEED, STEPPER_ACCELERATION);
+  Serial.printf("Seuils : T [%.2f–%.2f]°C  |  H [%.2f–%.2f]%%\n\n",
+                TEMP_MIN, TEMP_MAX, HUMIDITY_MIN, HUMIDITY_MAX);
 
-  connectWiFi();
-
-  dht_1.begin();
-  dht_2.begin();
-  dht_3.begin();
-  dht_4.begin();
-
-  // Initialisation du stepper avec les paramètres du driver
-  stepper.setMaxSpeed(STEPPER_MAX_SPEED);
-  stepper.setAcceleration(STEPPER_ACCELERATION);
-
-  pinMode(FAN_PIN,        OUTPUT);
-  pinMode(HUMIDIFIER_PIN, OUTPUT);
-  digitalWrite(FAN_PIN,        LOW);
-  digitalWrite(HUMIDIFIER_PIN, LOW);
-
-  initLEDs();
-  digitalWrite(LED_BLUE_PIN, HIGH);  // LED bleue pendant l'init
-
-  pinMode(BUTTON_STEPPER_PIN, INPUT_PULLUP);
-  pinMode(BUTTON_LCD_SCROLL_PIN, INPUT_PULLUP);
-
+  // LCD (init avant WiFi pour afficher les états)
   lcd.init();
   lcd.backlight();
-  lcd.setCursor(0, 0);
-  lcd.print("ESP32 Sensor v2");
-  lcd.setCursor(0, 1);
-  lcd.print("Initializing...");
+  printLCDLine(0, "ESP32 Sensor v3");
+  printLCDLine(1, "Init...");
   setLCDLog("Initializing...");
 
-  Serial.println("Initialisation terminee\n");
+  // WiFi
+  connectWiFi();
+
+  // Capteurs DHT
+  dht_1.begin(); dht_2.begin(); dht_3.begin(); dht_4.begin();
+
+  // Stepper
+  stepper.setMaxSpeed(STEPPER_MAX_SPEED);
+  stepper.setAcceleration(STEPPER_ACCELERATION);
+  pinMode(STEPPER_ENABLE_PIN, OUTPUT);
+  disableStepper();
+
+  // Actionneurs
+  pinMode(FAN_PIN,        OUTPUT); digitalWrite(FAN_PIN,        LOW);
+  pinMode(HUMIDIFIER_PIN, OUTPUT); digitalWrite(HUMIDIFIER_PIN, LOW);
+
+  // LEDs
+  initLEDs();
+  digitalWrite(LED_BLUE_PIN, HIGH);  // Bleue allumée pendant l'init
+
+  // Boutons avec pull-up interne
+  pinMode(BUTTON_STEPPER_PIN,    INPUT_PULLUP);
+  pinMode(BUTTON_LCD_SCROLL_PIN, INPUT_PULLUP);
+
+  Serial.println("Initialisation terminee.\n");
 }
 
-// ============== LOOP ==============
+// ============================================================
+//  LOOP
+// ============================================================
 
 void loop() {
   static unsigned long lastSendTime = 0;
   unsigned long now = millis();
 
+  // --- Watchdog WiFi (non-bloquant) ---
   if (WiFi.status() != WL_CONNECTED && now - lastSendTime >= SEND_INTERVAL) {
     connectWiFi();
   }
 
+  // --- Reconnexion serveur si mode autonome (indépendant de SEND_INTERVAL) ---
+  tryReconnectToServer();
+
+  // ----------------------------------------------------------------
+  //  CYCLE PRINCIPAL toutes les SEND_INTERVAL ms
+  // ----------------------------------------------------------------
   if (now - lastSendTime >= SEND_INTERVAL) {
     lastSendTime = now;
 
-    // Lecture des 4 capteurs
+    // 1. Lecture des 4 capteurs
     SensorData sensors[4];
     sensors[0] = readSensor(dht_1, 1);
     sensors[1] = readSensor(dht_2, 2);
     sensors[2] = readSensor(dht_3, 3);
     sensors[3] = readSensor(dht_4, 4);
 
-  // Calcul des moyennes
-  calculateAverages(sensors, 4, avgTemperature, avgHumidity, numFailedSensors);
+    // 2. Calcul des moyennes
+    calculateAverages(sensors, 4, avgTemperature, avgHumidity, numFailedSensors);
 
-  // Construction du payload JSON
-  // ✅ v7 : JsonDocument (auto-alloué depuis le heap, pas de taille fixe)
-  JsonDocument payload;
+    // 3. Construction du payload JSON
+    JsonDocument payload;
+    for (int i = 0; i < 4; i++) {
+      String key = "sensor_" + String(i + 1);
+      payload[key]["temperature"] = sensors[i].temperature;
+      payload[key]["humidity"]    = sensors[i].humidity;
+      payload[key]["valid"]       = sensors[i].valid;
+    }
+    payload["average_temperature"] = avgTemperature;
+    payload["average_humidity"]    = avgHumidity;
+    payload["fan_status"]          = fanOn        ? "ON" : "OFF";
+    payload["humidifier_status"]   = humidifierOn ? "ON" : "OFF";
+    payload["numFailedSensors"]    = numFailedSensors;
 
-  for (int i = 0; i < 4; i++) {
-    String sensorKey = "sensor_" + String(i + 1);
-    payload[sensorKey]["temperature"] = sensors[i].temperature;
-    payload[sensorKey]["humidity"]    = sensors[i].humidity;
-    payload[sensorKey]["valid"]       = sensors[i].valid;
+    String jsonPayload;
+    serializeJson(payload, jsonPayload);
+
+    // 4. Envoi au serveur
+    serverSuccess = false;
+    if (!autonomousMode) {
+      serverSuccess = sendDataToServer(jsonPayload);
+    }
+
+    // 5. Commandes automation (ou logique de secours)
+    if (autonomousMode) {
+      applyBackupLogic(avgTemperature, avgHumidity);
+    } else if (!getAutomationStatus()) {
+      applyBackupLogic(avgTemperature, avgHumidity);
+    }
+
+    // 6. Commande stepper via serveur
+    if (!autonomousMode) {
+      getStepperCommand();
+    }
+
+    // 7. Logs série
+    printStatus(sensors, 4, avgTemperature, avgHumidity, numFailedSensors);
   }
 
-  payload["average_temperature"] = avgTemperature;
-  payload["average_humidity"]    = avgHumidity;
-  payload["fan_status"]          = fanOn        ? "ON" : "OFF";
-  payload["humidifier_status"]   = humidifierOn ? "ON" : "OFF";
-  payload["numFailedSensors"]    = numFailedSensors;
-
-  String jsonPayload;
-  serializeJson(payload, jsonPayload);
-
-  // Envoi au serveur
-  serverSuccess = false;
-  if (!autonomousMode) {
-    serverSuccess = sendDataToServer(jsonPayload);
-  }
-
-  // Commandes d'automation
-  if (autonomousMode) {
-    applyBackupLogic(avgTemperature, avgHumidity);
-    tryReconnectToServer();
-  } else if (!getAutomationStatus()) {
-    applyBackupLogic(avgTemperature, avgHumidity);
-  }
-
-  // Commande stepper serveur (seulement si connecté)
-  if (!autonomousMode) {
-    getStepperCommand();
-  }
-
-  // Logs Serial
-  printStatus(sensors, 4, avgTemperature, avgHumidity, numFailedSensors);
-  if (autonomousMode) {
-    Serial.println(">>> MODE AUTONOME ACTIF <<<");
-  }
-  }
-
-  // Bouton stepper manuel
+  // ----------------------------------------------------------------
+  //  TÂCHES CONTINUES (toutes les 100 ms)
+  // ----------------------------------------------------------------
   checkStepperButton();
-  // Bouton de defilement manuel des logs LCD
   checkLCDScrollButton();
-
-  // Defilement auto des logs toutes les 3 secondes
   updateLCDScroll(now);
-
-  // LEDs de statut
   updateStatusLEDs(avgTemperature, avgHumidity, serverSuccess || serverConnected);
-
-  // Affichage LCD
   displayStatusOnLCD(avgTemperature, avgHumidity);
 
-  // Stepper
   if (stepper.isRunning()) {
+    enableStepper();
     stepper.run();
+  } else {
+    disableStepper();
   }
 
   delay(100);

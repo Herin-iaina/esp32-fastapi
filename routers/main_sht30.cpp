@@ -19,6 +19,9 @@
 #define STEPPER_PIN_STEP  13  // Step/Pulse (pour TB6600 et A4988)
 #define STEPPER_PIN_3     25  // Optionnel pour A4988 FULL4WIRE
 #define STEPPER_PIN_4     26  // Optionnel pour A4988 FULL4WIRE
+#define STEPPER_ENABLE_PIN 32  // Enable pin pour couper le courant quand le stepper est à l'arrêt
+#define STEPPER_ENABLE_ACTIVE_STATE LOW
+#define STEPPER_ENABLE_DISABLE_STATE HIGH
 #define FAN_PIN         14
 #define HUMIDIFIER_PIN  15
 
@@ -94,7 +97,7 @@ const int MAX_SERVER_RETRIES = 10;  // Nombre max de tentatives avant mode auton
 Adafruit_SHT31 sht30_1 = Adafruit_SHT31();
 Adafruit_SHT31 sht30_2 = Adafruit_SHT31();
 
-AccelStepper stepper(AccelStepper::DRIVER, STEPPER_PIN_DIR, STEPPER_PIN_STEP);
+AccelStepper stepper(AccelStepper::DRIVER, STEPPER_PIN_STEP, STEPPER_PIN_DIR);
 
 LiquidCrystal_I2C lcd(LCD_ADDRESS, LCD_COLS, LCD_ROWS);
 
@@ -106,6 +109,7 @@ bool autonomousMode = false;
 int serverFailCount = 0;
 bool serverConnected = false;
 bool buttonPressed = false;
+bool stepperEnabled = false;
 unsigned long lastButtonPress = 0;
 
 // Nombre de capteurs SHT30 disponibles
@@ -396,8 +400,9 @@ bool getStepperCommand() {
       bool stepperStatus = doc["stepper"] | false;
       if (stepperStatus) {
         Serial.println("Rotation stepper activee");
+        stepper.setMaxSpeed(STEPPER_SPEED);
+        enableStepper();
         stepper.moveTo(stepper.currentPosition() + STEPPER_ROTATION_STEPS);
-        stepper.setSpeed(STEPPER_SPEED);
       }
       http.end();
       return true;
@@ -436,6 +441,20 @@ void applyBackupLogic(float avgTemp, float avgHumid) {
 
 // ============== GESTION BOUTON STEPPER ==============
 
+void enableStepper() {
+  if (!stepperEnabled) {
+    digitalWrite(STEPPER_ENABLE_PIN, STEPPER_ENABLE_ACTIVE_STATE);
+    stepperEnabled = true;
+  }
+}
+
+void disableStepper() {
+  if (stepperEnabled) {
+    digitalWrite(STEPPER_ENABLE_PIN, STEPPER_ENABLE_DISABLE_STATE);
+    stepperEnabled = false;
+  }
+}
+
 void checkStepperButton() {
   const unsigned long DEBOUNCE_DELAY = 200;
 
@@ -445,9 +464,9 @@ void checkStepperButton() {
       buttonPressed = true;
 
       Serial.println("Bouton presse - Lancement rotation stepper");
-
+      stepper.setMaxSpeed(STEPPER_SPEED);
+      enableStepper();
       stepper.moveTo(stepper.currentPosition() + STEPPER_ROTATION_STEPS);
-      stepper.setSpeed(STEPPER_SPEED);
     }
   }
 }
@@ -509,6 +528,8 @@ void setup() {
   stepper.setAcceleration(STEPPER_ACCELERATION);
 
   // Initialize output pins
+  pinMode(STEPPER_ENABLE_PIN, OUTPUT);
+  disableStepper();
   pinMode(FAN_PIN, OUTPUT);
   pinMode(HUMIDIFIER_PIN, OUTPUT);
   digitalWrite(FAN_PIN, LOW);
@@ -605,8 +626,11 @@ void loop() {
   displayStatusOnLCD(avgTemperature, avgHumidity);
 
   // Run stepper if needed
-  while (stepper.isRunning()) {
+  if (stepper.isRunning()) {
+    enableStepper();
     stepper.run();
+  } else {
+    disableStepper();
   }
 
   // Wait before next iteration

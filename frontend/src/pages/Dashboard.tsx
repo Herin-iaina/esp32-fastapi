@@ -6,22 +6,35 @@ import StatusCard from '../components/StatusCard'
 import HistoryTable from '../components/HistoryTable'
 import './Dashboard.css'
 import { Thermometer, Droplets, Wind, Zap, TestTube } from 'lucide-react'
+import { logger } from '../utils/logger'
 
 function Dashboard() {
   const { data, loading, fetchData, fetchHistory, isMockData } = useSensorStore()
 
   useEffect(() => {
+    logger.logInfo('Dashboard', 'Dashboard monté, initialisation des données')
     // Ne plus forcer les données fictives
     const load = () => {
+      logger.logDebug('Dashboard', 'Chargement des données')
       fetchData(false)
       fetchHistory(24, false)
     }
 
     load()
     const interval = setInterval(load, 10000) // Refresh every 10s
-    return () => clearInterval(interval)
-  }, [fetchData, fetchHistory])
+    
+    return () => {
+    logger.logDebug('Dashboard', 'État de chargement...')
+    return <div className="loading">Chargement des données...</div>
+  }
 
+  if (!data) {
+    logger.logWarn('Dashboard', 'Aucune donnée disponible')
+    return <div className="error">Aucune donnée disponible</div>
+  }
+
+  if (isMockData) {
+    logger.logInfo('Dashboard', 'Données fictives en cours d\'utilisation')
   if (loading && !data) {
     return <div className="loading">Chargement des données...</div>
   }

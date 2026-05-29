@@ -114,13 +114,14 @@ Appuyer sur le bouton connecte GPIO 23 à GND, ce qui déclenche la rotation du 
 
 ```
 TB6600 Stepper Driver
-┌─────────────────┐
-│ +5V  │──────────│── 5V
-│ GND  │──────────│── GND
-│ DIR  │──────────│── GPIO 12 (Direction)
-│ PUL  │──────────│── GPIO 13 (Pulse/Step)
-│ ENA  │──────────│── 5V (Enable, toujours activé)
-└─────────────────┘
+┌─────────────────────────────────────────┐
+│ +5V   │──────────────│── 5V            │
+│ GND   │──────────────│── GND           │
+│ DIR   │──────────────│── GPIO 12       │
+│ PUL   │──────────────│── GPIO 13       │
+│ ENA+  │──────────────│── 5V            │
+│ ENA-  │──────────────│── GPIO 32       │
+└─────────────────────────────────────────┘
        │
        └── NEMA 17/23 Stepper Motor (24V recommandé)
 ```
@@ -143,12 +144,12 @@ TB6600 Stepper Driver
 ```
 A4988 Stepper Driver
 ┌─────────────────────┐
-│ DIR  │──────────────│── GPIO 12 (Direction)
-│ STEP │──────────────│── GPIO 13 (Step)
+│ DIR    │──────────────│── GPIO 12 (Direction)
+│ STEP   │──────────────│── GPIO 13 (Step)
 │ MS1, MS2, MS3 │────│── Config Microstep (optionnel)
-│ ENABLE │────────────│── GND (toujours activé)
-│ GND  │──────────────│── GND
-│ +5V  │──────────────│── 5V
+│ ENABLE │──────────────│── GPIO 32 (Enable, actif bas)
+│ GND    │──────────────│── GND
+│ +5V    │──────────────│── 5V
 └─────────────────────┘
        │
        └── NEMA 17 Stepper Motor (12V)
@@ -157,6 +158,7 @@ A4988 Stepper Driver
 **Mode de fonctionnement:**
 - Si MS1/MS2/MS3 non connectés: Full-step
 - Connecter des pins GPIO pour contrôler le microstep
+- `ENABLE` est actif bas : LOW active le driver, HIGH désactive les bobines
 
 **Avantages A4988:**
 - Support des moteurs 12V

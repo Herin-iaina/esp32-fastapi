@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react'
 import './App.css'
 import Dashboard from './pages/Dashboard'
 import Settings from './pages/Settings'
+import DebugPanel from './components/DebugPanel'
 import { useSensorStore } from './store/sensorStore'
 import { useAppStore } from './store/appStore'
 import { AlertCircle } from 'lucide-react'
+import { logger } from './utils/logger'
 
 function App() {
   const [currentPage, setCurrentPage] = useState<'dashboard' | 'settings'>('dashboard')
@@ -13,8 +15,18 @@ function App() {
   const { isDarkMode } = useAppStore()
 
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true)
-    const handleOffline = () => setIsOnline(false)
+    logger.logInfo('App', 'Application démarrée')
+  }, [])
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true)
+      logger.logInfo('App', 'Application en ligne')
+    }
+    const handleOffline = () => {
+      setIsOnline(false)
+      logger.logWarn('App', 'Application hors ligne')
+    }
 
     window.addEventListener('online', handleOnline)
     window.addEventListener('offline', handleOffline)
@@ -42,13 +54,19 @@ function App() {
           <div className="nav-buttons">
             <button
               className={`nav-btn ${currentPage === 'dashboard' ? 'active' : ''}`}
-              onClick={() => setCurrentPage('dashboard')}
+              onClick={() => {
+                logger.logButtonClick('Tableau de Bord', 'App')
+                setCurrentPage('dashboard')
+              }}
             >
               Tableau de Bord
             </button>
             <button
               className={`nav-btn ${currentPage === 'settings' ? 'active' : ''}`}
-              onClick={() => setCurrentPage('settings')}
+              onClick={() => {
+                logger.logButtonClick('Paramètres', 'App')
+                setCurrentPage('settings')
+              }}
             >
               Paramètres
             </button>
@@ -78,6 +96,8 @@ function App() {
       <footer className="footer">
         <p>Système de Surveillance des Capteurs ESP32 v2.0</p>
       </footer>
+
+      <DebugPanel />
     </div>
   )
 }
