@@ -14,7 +14,8 @@ Ce document décrit le câblage complet du système de contrôle d'incubateur ba
 | DHT22 #2 | GPIO 2 | Capteur température/humidité 2 |
 | DHT22 #3 | GPIO 4 | Capteur température/humidité 3 |
 | DHT22 #4 | GPIO 5 | Capteur température/humidité 4 |
-| Stepper Motor | GPIO 12, 13 | Moteur pas à pas (retournement) |
+| Stepper DIR | GPIO 12 | Direction moteur pas à pas |
+| Stepper STEP | GPIO 13 | Pulse/Step moteur pas à pas |
 | Ventilateur | GPIO 14 | Contrôle ventilateur (refroidissement) |
 | Humidificateur | GPIO 15 | Contrôle humidificateur |
 | LED Verte | GPIO 16 | Temp & Humidité OK (±2%) |
@@ -109,19 +110,76 @@ Appuyer sur le bouton connecte GPIO 23 à GND, ce qui déclenche la rotation du 
 
 ### 4. Moteur pas à pas (Stepper)
 
+#### Option A: Driver TB6600 (RECOMMANDÉ)
+
 ```
-Driver ULN2003 / A4988
+TB6600 Stepper Driver
+┌─────────────────┐
+│ +5V  │──────────│── 5V
+│ GND  │──────────│── GND
+│ DIR  │──────────│── GPIO 12 (Direction)
+│ PUL  │──────────│── GPIO 13 (Pulse/Step)
+│ ENA  │──────────│── 5V (Enable, toujours activé)
+└─────────────────┘
+       │
+       └── NEMA 17/23 Stepper Motor (24V recommandé)
+```
+
+**Avantages TB6600:**
+- Contrôle DIR/STEP simple et standardisé
+- Support des moteurs 24V/48V
+- Microstepping intégré (configurable sur le driver)
+- Meilleure performance et couple
+- Consommation énergétique optimisée
+
+**Configuration DIP du TB6600:**
+- Microstep: Régler selon vos besoins (1/1, 1/2, 1/4, 1/8, 1/16)
+- Current: Adapter au moteur utilisé (1A, 2A, 3A, 4A)
+
+---
+
+#### Option B: Driver A4988 (Compatible)
+
+```
+A4988 Stepper Driver
+┌─────────────────────┐
+│ DIR  │──────────────│── GPIO 12 (Direction)
+│ STEP │──────────────│── GPIO 13 (Step)
+│ MS1, MS2, MS3 │────│── Config Microstep (optionnel)
+│ ENABLE │────────────│── GND (toujours activé)
+│ GND  │──────────────│── GND
+│ +5V  │──────────────│── 5V
+└─────────────────────┘
+       │
+       └── NEMA 17 Stepper Motor (12V)
+```
+
+**Mode de fonctionnement:**
+- Si MS1/MS2/MS3 non connectés: Full-step
+- Connecter des pins GPIO pour contrôler le microstep
+
+**Avantages A4988:**
+- Support des moteurs 12V
+- Flexible avec configuration microstep par GPIO
+- Moins de puissance
+
+---
+
+#### Option C: Driver ULN2003 (Retro-compatibilité)
+
+```
+ULN2003 Driver Module
 ┌─────────────────┐
 │ IN1  │──────────│── GPIO 12
 │ IN2  │──────────│── GPIO 13
-│ IN3  │──────────│── (si 4 fils)
-│ IN4  │──────────│── (si 4 fils)
-│ VCC  │──────────│── 5V-12V (selon moteur)
+│ IN3  │──────────│── GPIO 25 (optionnel)
+│ IN4  │──────────│── GPIO 26 (optionnel)
+│ VCC  │──────────│── 5V
 │ GND  │──────────│── GND
 └─────────────────┘
 ```
 
-**Note**: Le code utilise `AccelStepper::FULL4WIRE` mais seulement 2 pins sont définies. Vérifier si vous utilisez un driver 2 fils ou 4 fils.
+**Note**: ULN2003 est limité à 500mA par canal, moins recommandé.
 
 ---
 
@@ -259,3 +317,52 @@ const int serverPort = 5000;
 | LEDs ne s'allument pas | Vérifier polarité et résistances |
 | Pas de connexion WiFi | Vérifier SSID/mot de passe |
 | Mode autonome activé | Vérifier connexion serveur (IP, port) |
+
+---
+
+## Configuration du Driver Stepper (TB6600 vs A4988)
+
+### 🔧 Comment changer de driver ?
+
+Voir le guide complet : [STEPPER_DRIVER_GUIDE.md](../STEPPER_DRIVER_GUIDE.md)
+
+**Résumé rapide :**
+
+1. Ouvrez le fichier C++ de votre choix (par exemple `main.cpp`)
+2. Modifiez la première ligne de configuration :
+   ```cpp
+   #define STEPPER_DRIVER_TYPE "TB6600"  // Ou "A4988"
+   ```
+3. Recompliez et téléversez sur l'ESP32
+
+### ⚡ Recommandations
+
+**Utilisez TB6600 si :**
+- ✅ Vous avez un moteur NEMA 17/23
+- ✅ Vous avez une alimentation 24V disponible
+- ✅ Vous avez besoin de performances optimales
+
+**Utilisez A4988 si :**
+- ✅ Vous avez un moteur NEMA 17 (12V)
+- ✅ Vous avez une alimentation 12V
+- ✅ Vous prototypez ou testez
+
+### 📋 Vérification du Driver dans les Logs
+
+À l'initialisation, consultez la sortie série :
+
+```
+=== ESP32 Sensor Controller v2 ===
+
+Stepper Driver: TB6600 (DIR/STEP)
+Max Speed: 1000 steps/sec
+Acceleration: 2000 steps/sec²
+```
+
+Ou avec A4988 :
+
+```
+Stepper Driver: A4988 (DIR/STEP)
+Max Speed: 300 steps/sec
+Acceleration: 1000 steps/sec²
+```

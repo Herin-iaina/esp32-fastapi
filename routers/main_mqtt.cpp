@@ -8,14 +8,21 @@
 
 // ============== CONFIGURATION ==============
 
+// ============== SÉLECTION DU DRIVER STEPPER ==============
+#define STEPPER_DRIVER_TYPE_TB6600 1
+#define STEPPER_DRIVER_TYPE_A4988  2
+#define STEPPER_DRIVER_TYPE STEPPER_DRIVER_TYPE_TB6600  // Changer à STEPPER_DRIVER_TYPE_A4988 pour utiliser l'autre driver
+
 // Pin Definitions
 #define DHT_SENSOR_TYPE DHT22
 #define DHT_1_PIN_DATA  0
 #define DHT_2_PIN_DATA  2
 #define DHT_3_PIN_DATA  4
 #define DHT_4_PIN_DATA  5
-#define STEPPER_PIN_1   12
-#define STEPPER_PIN_2   13
+#define STEPPER_PIN_DIR   12  // Direction (pour TB6600 et A4988)
+#define STEPPER_PIN_STEP  13  // Step/Pulse (pour TB6600 et A4988)
+#define STEPPER_PIN_3     25  // Optionnel pour A4988 FULL4WIRE
+#define STEPPER_PIN_4     26  // Optionnel pour A4988 FULL4WIRE
 #define FAN_PIN         14
 #define HUMIDIFIER_PIN  15
 
@@ -68,6 +75,23 @@ const unsigned long SEND_INTERVAL = 5000;  // 5 secondes
 // Mode autonome
 const int MAX_MQTT_RETRIES = 10;  // Nombre max de tentatives avant mode autonome
 
+// ============== CONFIGURATION STEPPER PAR DRIVER ==============
+#if STEPPER_DRIVER_TYPE == STEPPER_DRIVER_TYPE_TB6600
+  #define STEPPER_MAX_SPEED         1000    // steps/sec
+  #define STEPPER_ACCELERATION      2000    // steps/sec²
+  #define STEPPER_STEPS_PER_ROTATION 200    // 200 steps = 1 rotation
+  #define STEPPER_ROTATION_STEPS    (STEPPER_STEPS_PER_ROTATION * 5)  // 5 rotations
+  #define STEPPER_SPEED             300
+  static const char* DRIVER_NAME = "TB6600 (DIR/STEP)";
+#else
+  #define STEPPER_MAX_SPEED         300     // steps/sec
+  #define STEPPER_ACCELERATION      1000    // steps/sec²
+  #define STEPPER_STEPS_PER_ROTATION 200
+  #define STEPPER_ROTATION_STEPS    (STEPPER_STEPS_PER_ROTATION * 5)
+  #define STEPPER_SPEED             100
+  static const char* DRIVER_NAME = "A4988 (DIR/STEP)";
+#endif
+
 // ============== OBJETS GLOBAUX ==============
 
 DHT dht_1(DHT_1_PIN_DATA, DHT_SENSOR_TYPE);
@@ -75,7 +99,7 @@ DHT dht_2(DHT_2_PIN_DATA, DHT_SENSOR_TYPE);
 DHT dht_3(DHT_3_PIN_DATA, DHT_SENSOR_TYPE);
 DHT dht_4(DHT_4_PIN_DATA, DHT_SENSOR_TYPE);
 
-AccelStepper stepper(AccelStepper::FULL4WIRE, STEPPER_PIN_1, STEPPER_PIN_2);
+AccelStepper stepper(AccelStepper::DRIVER, STEPPER_PIN_DIR, STEPPER_PIN_STEP);
 
 LiquidCrystal_I2C lcd(LCD_ADDRESS, LCD_COLS, LCD_ROWS);
 
@@ -160,8 +184,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     bool stepperStatus = doc["activate"] | false;
     if (stepperStatus) {
       Serial.println("Rotation stepper activee via MQTT");
-      stepper.moveTo(stepper.currentPosition() + 200);
-      stepper.setSpeed(100);
+      stepper.moveTo(stepper.currentPosition() + STEPPER_ROTATION_STEPS);
+      stepper.setSpeed(STEPPER_SPEED);
     }
   }
 
@@ -390,21 +414,18 @@ void checkStepperButton() {
 
       Serial.println("Bouton presse - Lancement rotation stepper");
 
-      stepper.moveTo(stepper.currentPosition() + 200);
-      stepper.setSpeed(100);
+      stepper.moveTo(stepper.currentPosition() + STEPPER_ROTATION_STEPS);
+      stepper.setSpeed(STEPPER_SPEED);
     }
   }
 }
 
 void printStatus(SensorData sensors[], int count, float avgTemp, float avgHumid, int failedCount) {
   Serial.println("\n========== STATUS (MQTT) ==========");
-  for (int i = 0; i < count; i++) {
-    Serial.printf("Capteur %d: %.1f°C, %.1f%% %s\n",
-                  i + 1,
-                  sensors[i].temperature,
-                  sensors[i].humidity,
-                  sensors[i].valid ? "" : "[ERREUR]");
-  }
+  Serial.printf("Capteur 1: %.1f°C, %.1f%%\n", sensors[0].temperature, sensors[0].humidity);
+  Serial.printf("Capteur 2: %.1f°C, %.1f%%\n", sensors[1].temperature, sensors[1].humidity);
+  Serial.printf("Capteur 3: %.1f°C, %.1f%%\n", sensors[2].temperature, sensors[2].humidity);
+  Serial.printf("Capteur 4: %.1f°C, %.1f%%\n", sensors[3].temperature, sensors[3].humidity);
   Serial.printf("Moyenne: %.1f°C, %.1f%%\n", avgTemp, avgHumid);
   Serial.printf("Ventilateur: %s\n", fanOn ? "ON" : "OFF");
   Serial.printf("Humidificateur: %s\n", humidifierOn ? "ON" : "OFF");
@@ -455,9 +476,12 @@ void setup() {
   dht_3.begin();
   dht_4.begin();
 
-  // Initialize stepper motor
-  stepper.setMaxSpeed(300);
-  stepper.setAcceleration(1000);
+  // Initialize stepper motor with configured parameters
+  Serial.printf("Stepper Driver: %s\n", DRIVER_NAME);
+  Serial.printf("Max Speed: %d steps/sec\n", STEPPER_MAX_SPEED);
+  Serial.printf("Acceleration: %d steps/sec²\n", STEPPER_ACCELERATION);
+  stepper.setMaxSpeed(STEPPER_MAX_SPEED);
+  stepper.setAcceleration(STEPPER_ACCELERATION);
 
   // Initialize output pins
   pinMode(FAN_PIN, OUTPUT);

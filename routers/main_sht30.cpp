@@ -9,9 +9,16 @@
 
 // ============== CONFIGURATION ==============
 
+// ============== SÉLECTION DU DRIVER STEPPER ==============
+#define STEPPER_DRIVER_TYPE_TB6600 1
+#define STEPPER_DRIVER_TYPE_A4988  2
+#define STEPPER_DRIVER_TYPE STEPPER_DRIVER_TYPE_TB6600  // Changer à STEPPER_DRIVER_TYPE_A4988 pour utiliser l'autre driver
+
 // Pin Definitions
-#define STEPPER_PIN_1   12
-#define STEPPER_PIN_2   13
+#define STEPPER_PIN_DIR   12  // Direction (pour TB6600 et A4988)
+#define STEPPER_PIN_STEP  13  // Step/Pulse (pour TB6600 et A4988)
+#define STEPPER_PIN_3     25  // Optionnel pour A4988 FULL4WIRE
+#define STEPPER_PIN_4     26  // Optionnel pour A4988 FULL4WIRE
 #define FAN_PIN         14
 #define HUMIDIFIER_PIN  15
 
@@ -64,13 +71,30 @@ const unsigned long SEND_INTERVAL = 5000;  // 5 secondes
 // Mode autonome
 const int MAX_SERVER_RETRIES = 10;  // Nombre max de tentatives avant mode autonome
 
+// ============== CONFIGURATION STEPPER PAR DRIVER ==============
+#if STEPPER_DRIVER_TYPE == STEPPER_DRIVER_TYPE_TB6600
+  #define STEPPER_MAX_SPEED         1000    // steps/sec
+  #define STEPPER_ACCELERATION      2000    // steps/sec²
+  #define STEPPER_STEPS_PER_ROTATION 200    // 200 steps = 1 rotation
+  #define STEPPER_ROTATION_STEPS    (STEPPER_STEPS_PER_ROTATION * 5)  // 5 rotations
+  #define STEPPER_SPEED             300
+  static const char* DRIVER_NAME = "TB6600 (DIR/STEP)";
+#else
+  #define STEPPER_MAX_SPEED         300     // steps/sec
+  #define STEPPER_ACCELERATION      1000    // steps/sec²
+  #define STEPPER_STEPS_PER_ROTATION 200
+  #define STEPPER_ROTATION_STEPS    (STEPPER_STEPS_PER_ROTATION * 5)
+  #define STEPPER_SPEED             100
+  static const char* DRIVER_NAME = "A4988 (DIR/STEP)";
+#endif
+
 // ============== OBJETS GLOBAUX ==============
 
 // SHT30 sensors (2 capteurs avec adresses différentes)
 Adafruit_SHT31 sht30_1 = Adafruit_SHT31();
 Adafruit_SHT31 sht30_2 = Adafruit_SHT31();
 
-AccelStepper stepper(AccelStepper::FULL4WIRE, STEPPER_PIN_1, STEPPER_PIN_2);
+AccelStepper stepper(AccelStepper::DRIVER, STEPPER_PIN_DIR, STEPPER_PIN_STEP);
 
 LiquidCrystal_I2C lcd(LCD_ADDRESS, LCD_COLS, LCD_ROWS);
 
@@ -372,8 +396,8 @@ bool getStepperCommand() {
       bool stepperStatus = doc["stepper"] | false;
       if (stepperStatus) {
         Serial.println("Rotation stepper activee");
-        stepper.moveTo(stepper.currentPosition() + 200);
-        stepper.setSpeed(100);
+        stepper.moveTo(stepper.currentPosition() + STEPPER_ROTATION_STEPS);
+        stepper.setSpeed(STEPPER_SPEED);
       }
       http.end();
       return true;
@@ -422,21 +446,18 @@ void checkStepperButton() {
 
       Serial.println("Bouton presse - Lancement rotation stepper");
 
-      stepper.moveTo(stepper.currentPosition() + 200);
-      stepper.setSpeed(100);
+      stepper.moveTo(stepper.currentPosition() + STEPPER_ROTATION_STEPS);
+      stepper.setSpeed(STEPPER_SPEED);
     }
   }
 }
 
 void printStatus(SensorData sensors[], int count, float avgTemp, float avgHumid, int failedCount) {
   Serial.println("\n========== STATUS (SHT30) ==========");
-  for (int i = 0; i < count; i++) {
-    Serial.printf("Capteur SHT30 #%d: %.1f°C, %.1f%% %s\n",
-                  i + 1,
-                  sensors[i].temperature,
-                  sensors[i].humidity,
-                  sensors[i].valid ? "" : "[ERREUR]");
-  }
+  Serial.printf("Capteur 1: %.1f°C, %.1f%%\n", sensors[0].temperature, sensors[0].humidity);
+  Serial.printf("Capteur 2: %.1f°C, %.1f%%\n", sensors[1].temperature, sensors[1].humidity);
+  Serial.printf("Capteur 3: %.1f°C, %.1f%%\n", sensors[2].temperature, sensors[2].humidity);
+  Serial.printf("Capteur 4: %.1f°C, %.1f%%\n", sensors[3].temperature, sensors[3].humidity);
   Serial.printf("Moyenne: %.1f°C, %.1f%%\n", avgTemp, avgHumid);
   Serial.printf("Ventilateur: %s\n", fanOn ? "ON" : "OFF");
   Serial.printf("Humidificateur: %s\n", humidifierOn ? "ON" : "OFF");
@@ -480,9 +501,12 @@ void setup() {
     Serial.println("ATTENTION: Aucun capteur SHT30 detecte!");
   }
 
-  // Initialize stepper motor
-  stepper.setMaxSpeed(300);
-  stepper.setAcceleration(1000);
+  // Initialize stepper motor with configured parameters
+  Serial.printf("Stepper Driver: %s\n", DRIVER_NAME);
+  Serial.printf("Max Speed: %d steps/sec\n", STEPPER_MAX_SPEED);
+  Serial.printf("Acceleration: %d steps/sec²\n", STEPPER_ACCELERATION);
+  stepper.setMaxSpeed(STEPPER_MAX_SPEED);
+  stepper.setAcceleration(STEPPER_ACCELERATION);
 
   // Initialize output pins
   pinMode(FAN_PIN, OUTPUT);
