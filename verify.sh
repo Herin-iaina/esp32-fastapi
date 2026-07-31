@@ -82,10 +82,7 @@ test_command "Frontend index.html exists" "[ -f 'frontend/dist/index.html' ]"
 echo ""
 echo "📄 Documentation:"
 test_command "README exists" "[ -f 'README.md' ]"
-test_command "USER_GUIDE exists" "[ -f 'USER_GUIDE.md' ]"
-test_command "TEST_PLAN exists" "[ -f 'TEST_PLAN.md' ]"
-test_command "CHANGELOG exists" "[ -f 'CHANGELOG.md' ]"
-test_command "TROUBLESHOOTING exists" "[ -f 'TROUBLESHOOTING.md' ]"
+test_command "CONFIGURATION exists" "[ -f 'CONFIGURATION.md' ]"
 
 echo ""
 echo "🔧 Scripts:"
@@ -101,7 +98,7 @@ echo ""
 if [ $FAILED -gt 0 ]; then
     echo "$FAIL $FAILED tests échoués"
     echo ""
-    echo "Pour plus de détails, consulter TROUBLESHOOTING.md"
+    echo "Pour plus de détails, consulter README.md ou CONFIGURATION.md"
     exit 1
 else
     echo "🎉 Tous les tests sont passés!"
