@@ -1,8 +1,3 @@
-Voici ton code source **entièrement mis à jour pour ArduinoJson v7** !
-
-Toutes les allocations statiques (`StaticJsonDocument`) ont été remplacées par le type universel `JsonDocument`, et les constantes de taille devenues inutiles ont été nettoyées.
-
-```cpp
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
@@ -82,6 +77,8 @@ const unsigned long WIFI_TIMEOUT         = 15000UL;  // ms max pour connexion Wi
 
 const int LCD_LOG_BUFFER_SIZE = 6;
 const int MAX_SERVER_RETRIES  = 10;
+constexpr size_t JSON_PAYLOAD_DOC_SIZE   = 512;
+constexpr size_t JSON_RESPONSE_DOC_SIZE  = 192;
 
 // ============================================================
 //  CONFIGURATION STEPPER
@@ -274,7 +271,7 @@ void checkAutonomousMode() {
   }
 }
 
-bool sendDataToServer(const String& jsonPayload) {
+bool sendDataToServer(const char* jsonPayload, size_t payloadLength) {
   if (autonomousMode || WiFi.status() != WL_CONNECTED) {
     if (!autonomousMode) {
       serverFailCount++;
@@ -291,7 +288,7 @@ bool sendDataToServer(const String& jsonPayload) {
   http.addHeader("Content-Type", "application/json");
   http.addHeader("x-api-key", apiKey);
 
-  int code = http.POST(jsonPayload);
+  int code = http.POST((uint8_t*)jsonPayload, payloadLength);
   bool success = false;
 
   if (code > 0) {
@@ -371,7 +368,7 @@ bool getAutomationStatus() {
 
   if (code == HTTP_CODE_OK) {
     String response = http.getString();
-    JsonDocument doc; // ArduinoJson v7
+    StaticJsonDocument<JSON_RESPONSE_DOC_SIZE> doc;
     DeserializationError error = deserializeJson(doc, response);
     if (!error) {
       bool fanCmd   = doc["fan"]        | false;
@@ -412,7 +409,7 @@ bool getStepperCommand() {
 
   if (code == HTTP_CODE_OK) {
     String response = http.getString();
-    JsonDocument doc; // ArduinoJson v7
+    StaticJsonDocument<JSON_RESPONSE_DOC_SIZE> doc;
     DeserializationError error = deserializeJson(doc, response);
     if (!error) {
       if (doc["stepper"] | false) {
@@ -632,8 +629,7 @@ void loop() {
 
     calculateAverages(sensors, 4, avgTemperature, avgHumidity, numFailedSensors);
 
-    // Dynamic JsonDocument (ArduinoJson v7)
-    JsonDocument payload;
+    StaticJsonDocument<JSON_PAYLOAD_DOC_SIZE> payload;
     for (int i = 0; i < 4; i++) {
       char key[10];
       snprintf(key, sizeof(key), "sensor_%d", i + 1);
@@ -647,12 +643,12 @@ void loop() {
     payload["humidifier_status"]   = humidifierOn ? "ON" : "OFF";
     payload["numFailedSensors"]    = numFailedSensors;
 
-    String jsonPayload;
-    serializeJson(payload, jsonPayload);
+    char jsonPayload[JSON_PAYLOAD_DOC_SIZE];
+    size_t payloadLength = serializeJson(payload, jsonPayload, sizeof(jsonPayload));
 
     serverSuccess = false;
     if (!autonomousMode) {
-      serverSuccess = sendDataToServer(jsonPayload);
+      serverSuccess = sendDataToServer(jsonPayload, payloadLength);
     }
 
     if (autonomousMode) {
@@ -677,5 +673,4 @@ void loop() {
     displayStatusOnLCD(avgTemperature, avgHumidity);
   }
 }
-
-```
+EOF

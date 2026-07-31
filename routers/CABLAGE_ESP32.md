@@ -6,25 +6,104 @@ Ce document décrit le câblage complet du système de contrôle d'incubateur ba
 
 ---
 
+## Guide d'assemblage sur breadboard
+
+**Consignes importantes**
+
+- Ne branchez pas l'alimentation secteur (220V ou 12V/24V) tant que le câblage 3.3V/5V n'est pas terminé.
+- L'ESP32 fonctionne en logique 3.3V. N'appliquez jamais de signal 5V sur ses pins d'entrée (GPIO 33, 34, 35, 36).
+- Les broches GPIO 34, 35 et 36 sont uniquement des entrées (`Input Only`). Elles ne possèdent pas de résistances internes de pull-up, les résistances externes de 10kΩ pour les DHT22 sont donc obligatoires.
+
+### Étape 1. Alimentation des rails de la breadboard
+
+- Ligne rouge (+) supérieure → Broche 5V (ou VIN) de l'ESP32.
+- Ligne bleue (-) supérieure → Broche GND de l'ESP32.
+- Ligne rouge (+) inférieure → Broche 3.3V de l'ESP32 (pour DHT22 et TB6600 PUL+/DIR+/ENA+).
+- Ligne bleue (-) inférieure → Relier au rail GND supérieur pour partager une masse commune.
+
+### Étape 2. Capteurs DHT22 (x4)
+
+Chaque capteur DHT22 comporte 4 broches (vue de face, de gauche à droite : 1=VCC, 2=DATA, 3=NC, 4=GND).
+
+- DHT22 #1 : VCC → 3.3V, DATA → GPIO 33, GND → GND.
+- DHT22 #2 : VCC → 3.3V, DATA → GPIO 34, GND → GND.
+- DHT22 #3 : VCC → 3.3V, DATA → GPIO 35, GND → GND.
+- DHT22 #4 : VCC → 3.3V, DATA → GPIO 36, GND → GND.
+
+Pour chaque DHT22 : placer une résistance de 10kΩ entre VCC et DATA.
+
+### Étape 3. Écran LCD 16x2 I2C
+
+- GND → rail GND
+- VCC → rail 5V
+- SDA → GPIO 21
+- SCL → GPIO 22
+
+Adresse I2C : 0x27 (par défaut, peut être 0x3F).
+
+### Étape 4. Driver TB6600
+
+Le TB6600 est câblé en logique anode commune (cathodes contrôlées par l'ESP32) :
+
+- PUL+ → 3.3V
+- DIR+ → 3.3V
+- ENA+ → 3.3V
+- PUL- → GPIO 13
+- DIR- → GPIO 12
+- ENA- → GPIO 32
+- VCC / GND du TB6600 → alimentation externe 12V ou 24V
+- A+, A-, B+, B- → Moteur pas à pas NEMA
+
+> Important : utiliser une masse commune entre l'ESP32 et l'alimentation du TB6600 si les signaux sont référencés au même circuit.
+
+### Étape 5. Module relais 2 canaux
+
+- VCC du relais → rail 5V
+- GND du relais → rail GND
+- IN1 (ventilateur) → GPIO 14
+- IN2 (humidificateur) → GPIO 15
+
+### Étape 6. LEDs de statut (x4)
+
+Pour chaque LED : anode (+) → GPIO, cathode (-) → résistance 220Ω → rail GND.
+
+- LED Verte : GPIO 16
+- LED Orange : GPIO 17
+- LED Rouge : GPIO 18
+- LED Bleue : GPIO 19
+
+### Étape 7. Boutons poussoirs (x2)
+
+Les boutons utilisent la résistance `INPUT_PULLUP` interne de l'ESP32.
+
+- Bouton Stepper : GPIO 23 → bouton → GND
+- Bouton LCD (scroll logs) : GPIO 27 → bouton → GND
+
+---
+
 ## Tableau récapitulatif des connexions
 
 | Module | Pin ESP32 | Description |
 |--------|-----------|-------------|
-| DHT22 #1 | GPIO 0 | Capteur température/humidité 1 |
-| DHT22 #2 | GPIO 2 | Capteur température/humidité 2 |
-| DHT22 #3 | GPIO 4 | Capteur température/humidité 3 |
-| DHT22 #4 | GPIO 5 | Capteur température/humidité 4 |
+| DHT22 #1 | GPIO 33 | Capteur température/humidité 1 |
+| DHT22 #2 | GPIO 34 | Capteur température/humidité 2 |
+| DHT22 #3 | GPIO 35 | Capteur température/humidité 3 |
+| DHT22 #4 | GPIO 36 | Capteur température/humidité 4 |
 | Stepper DIR | GPIO 12 | Direction moteur pas à pas |
 | Stepper STEP | GPIO 13 | Pulse/Step moteur pas à pas |
+| Stepper ENABLE | GPIO 32 | Enable moteur pas à pas (actif bas pour TB6600/A4988) |
 | Ventilateur | GPIO 14 | Contrôle ventilateur (refroidissement) |
 | Humidificateur | GPIO 15 | Contrôle humidificateur |
-| LED Verte | GPIO 16 | Temp & Humidité OK (±2%) |
+| LED Verte | GPIO 16 | Temp & Humidité OK (±1.5%) |
 | LED Orange | GPIO 17 | Temp ou Humidité < normal |
 | LED Rouge | GPIO 18 | Temp ou Humidité > normal |
 | LED Bleue | GPIO 19 | Connexion serveur NOK |
 | Bouton Stepper | GPIO 23 | Lancement manuel moteur NEMA |
+| Bouton LCD Scroll | GPIO 27 | Défilement manuel écran LCD |
 | LCD I2C SDA | GPIO 21 | Données I2C (défaut ESP32) |
 | LCD I2C SCL | GPIO 22 | Horloge I2C (défaut ESP32) |
+
+> Attention : les broches GPIO0, GPIO2 et GPIO15 sont des strapping pins sur ESP32. Les utiliser pour des capteurs DHT22 peut empêcher le démarrage normal du module. Le code source utilise les broches GPIO 33, 34, 35 et 36 pour les capteurs DHT.
 
 ---
 
@@ -36,7 +115,7 @@ Ce document décrit le câblage complet du système de contrôle d'incubateur ba
 DHT22 #1          DHT22 #2          DHT22 #3          DHT22 #4
 ┌─────┐           ┌─────┐           ┌─────┐           ┌─────┐
 │ VCC │──3.3V     │ VCC │──3.3V     │ VCC │──3.3V     │ VCC │──3.3V
-│ DATA│──GPIO 0   │ DATA│──GPIO 2   │ DATA│──GPIO 4   │ DATA│──GPIO 5
+│ DATA│──GPIO 33  │ DATA│──GPIO 34  │ DATA│──GPIO 35  │ DATA│──GPIO 36
 │ NC  │           │ NC  │           │ NC  │           │ NC  │
 │ GND │──GND      │ GND │──GND      │ GND │──GND      │ GND │──GND
 └─────┘           └─────┘           └─────┘           └─────┘
@@ -86,14 +165,14 @@ Toutes les cathodes (–) des LEDs → GND
 **Signification des LEDs:**
 | LED | État | Signification |
 |-----|------|---------------|
-| Verte | ON | Température ET humidité dans la plage normale (±2%) |
+| Verte | ON | Température ET humidité dans la plage normale (±1.5%) |
 | Orange | ON | Température OU humidité en dessous de la normale |
 | Rouge | ON | Température OU humidité au-dessus de la normale |
 | Bleue | ON | Connexion serveur NON établie (mode autonome ou échec)
 
 ---
 
-### 5. Bouton Stepper (Lancement manuel NEMA)
+### 4. Boutons poussoirs (x2)
 
 ```
 Bouton poussoir
@@ -103,28 +182,34 @@ Bouton poussoir
 └─────────┘
 ```
 
-**Note**: Le bouton utilise la résistance pull-up interne de l'ESP32.
-Appuyer sur le bouton connecte GPIO 23 à GND, ce qui déclenche la rotation du moteur.
+- Bouton Stepper : GPIO 23 → bouton → GND
+- Bouton LCD Scroll : GPIO 27 → bouton → GND
+
+**Note**: Les boutons utilisent la résistance pull-up interne de l'ESP32.
+Appuyer sur le bouton connecte la pin GPIO à GND.
 
 ---
 
-### 4. Moteur pas à pas (Stepper)
+### 5. Moteur pas à pas (Stepper)
 
 #### Option A: Driver TB6600 (RECOMMANDÉ)
 
 ```
 TB6600 Stepper Driver
-┌─────────────────────────────────────────┐
-│ +5V   │──────────────│── 5V            │
-│ GND   │──────────────│── GND           │
-│ DIR   │──────────────│── GPIO 12       │
-│ PUL   │──────────────│── GPIO 13       │
-│ ENA+  │──────────────│── 5V            │
-│ ENA-  │──────────────│── GPIO 32       │
-└─────────────────────────────────────────┘
-       │
-       └── NEMA 17/23 Stepper Motor (24V recommandé)
+┌─────────────────────────────────────────────────┐
+│ PUL+ (5V/3.3V) │─────────────────│── 3.3V       │
+│ DIR+ (5V/3.3V) │─────────────────│── 3.3V       │
+│ ENA+ (5V/3.3V) │─────────────────│── 3.3V       │
+│ PUL- (STEP)    │─────────────────│── GPIO 13    │
+│ DIR- (DIR)     │─────────────────│── GPIO 12    │
+│ ENA- (ENABLE)  │─────────────────│── GPIO 32    │
+├─────────────────────────────────────────────────┤
+│ VCC / GND      │─────────────────│── Alim 12V-24V
+│ A+, A-, B+, B- │─────────────────│── Moteur NEMA
+└─────────────────────────────────────────────────┘
 ```
+
+> Pour l’ESP32, utilisez la logique 3.3V sur PUL+/DIR+/ENA+. Assurez-vous que le GND de l’ESP32 est commun avec l’alimentation du TB6600 si vous utilisez la référence de signal du module.
 
 **Avantages TB6600:**
 - Contrôle DIR/STEP simple et standardisé
@@ -211,10 +296,10 @@ Module Relais (2 canaux)
                                     ┌─────────────────┐
                                     │     ESP32       │
                                     │                 │
-    DHT22 #1 ──────────────────────│ GPIO 0          │
-    DHT22 #2 ──────────────────────│ GPIO 2          │
-    DHT22 #3 ──────────────────────│ GPIO 4          │
-    DHT22 #4 ──────────────────────│ GPIO 5          │
+    DHT22 #1 ──────────────────────│ GPIO 33         │
+    DHT22 #2 ──────────────────────│ GPIO 34         │
+    DHT22 #3 ──────────────────────│ GPIO 35         │
+    DHT22 #4 ──────────────────────│ GPIO 36         │
                                     │                 │
     Stepper IN1 ───────────────────│ GPIO 12         │
     Stepper IN2 ───────────────────│ GPIO 13         │
@@ -228,6 +313,7 @@ Module Relais (2 canaux)
     LED Bleue (+ 220Ω) ────────────│ GPIO 19         │
                                     │                 │
     Bouton Stepper ────────────────│ GPIO 23         │
+    Bouton LCD Scroll ──────────────│ GPIO 27         │
                                     │                 │
     LCD SDA ───────────────────────│ GPIO 21         │
     LCD SCL ───────────────────────│ GPIO 22         │
@@ -259,7 +345,7 @@ Module Relais (2 canaux)
 // Valeurs cibles
 const float TEMP_TARGET = 37.7;           // °C - Température cible
 const float HUMIDITY_TARGET = 45.0;       // % - Humidité cible
-const float TOLERANCE_PERCENT = 2.0;      // Tolérance ±2%
+const float TOLERANCE_PERCENT = 1.5;      // Tolérance ±1.5%
 
 // Seuils calculés automatiquement
 // TEMP_MIN = 36.95°C, TEMP_MAX = 38.45°C
@@ -284,7 +370,7 @@ const int serverPort = 5000;
 
 | Condition | LED |
 |-----------|-----|
-| Temp ET Humidité dans ±2% de la cible | Verte |
+| Temp ET Humidité dans ±1.5% de la cible | Verte |
 | Temp OU Humidité < minimum | Orange |
 | Temp OU Humidité > maximum | Rouge |
 | Serveur non connecté | Bleue |

@@ -355,7 +355,7 @@ bool getAutomationStatus() {
     String response = http.getString();
     Serial.println("Status recu: " + response);
 
-    StaticJsonDocument<256> doc;
+    JsonDocument doc;
     DeserializationError error = deserializeJson(doc, response);
 
     if (!error) {
@@ -393,7 +393,7 @@ bool getStepperCommand() {
     String response = http.getString();
     Serial.println("Stepper recu: " + response);
 
-    StaticJsonDocument<128> doc;
+    JsonDocument doc;
     DeserializationError error = deserializeJson(doc, response);
 
     if (!error) {
@@ -575,7 +575,8 @@ void loop() {
   StaticJsonDocument<1024> payload;
 
   for (int i = 0; i < NUM_SENSORS; i++) {
-    String sensorKey = "sensor_" + String(i + 1);
+    char sensorKey[10];
+    snprintf(sensorKey, sizeof(sensorKey), "sensor_%d", i + 1);
     payload[sensorKey]["temperature"] = sensors[i].temperature;
     payload[sensorKey]["humidity"] = sensors[i].humidity;
     payload[sensorKey]["valid"] = sensors[i].valid;
