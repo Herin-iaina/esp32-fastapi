@@ -1,4 +1,3 @@
-
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>          // v7+ : JsonDocument
@@ -17,18 +16,19 @@
 //  DÉFINITION DES PINS
 // ============================================================
 #define DHT_SENSOR_TYPE     DHT22
-#define DHT_1_PIN_DATA      0
-#define DHT_2_PIN_DATA      2
-#define DHT_3_PIN_DATA      4
-#define DHT_4_PIN_DATA      5
+#define DHT_1_PIN_DATA 33
+#define DHT_2_PIN_DATA 34
+#define DHT_3_PIN_DATA 35
+#define DHT_4_PIN_DATA 36
 
 #define STEPPER_PIN_DIR     12
 #define STEPPER_PIN_STEP    13
-#define STEPPER_PIN_3       25    // Optionnel A4988 FULL4WIRE
-#define STEPPER_PIN_4       26    // Optionnel A4988 FULL4WIRE
-#define STEPPER_ENABLE_PIN  32    // Enable pin pour couper le courant quand le stepper est à l'arrêt
-#define STEPPER_ENABLE_ACTIVE_STATE LOW
-#define STEPPER_ENABLE_DISABLE_STATE HIGH
+#define STEPPER_ENABLE_PIN  32    // Enable pin pour couper le courant
+
+// ⚠️ Ajuste ces deux états selon la réponse de ton TB6600 :
+// Si le moteur bloque au repos et devient libre en mouvement, inverse LOW et HIGH.
+#define STEPPER_ENABLE_ACTIVE_STATE   LOW   
+#define STEPPER_ENABLE_DISABLE_STATE  HIGH  
 
 #define FAN_PIN             14
 #define HUMIDIFIER_PIN      15
@@ -39,7 +39,7 @@
 #define LED_BLUE_PIN        19    // Serveur inaccessible / mode autonome
 
 #define BUTTON_STEPPER_PIN      23
-#define BUTTON_LCD_SCROLL_PIN   27    // ✅ FIX : était 25, conflit avec STEPPER_PIN_3
+#define BUTTON_LCD_SCROLL_PIN   27    
 
 #define LCD_ADDRESS         0x27
 #define LCD_COLS            16
@@ -82,9 +82,9 @@ const int MAX_SERVER_RETRIES  = 10;
 // ============================================================
 #if STEPPER_DRIVER_TYPE == STEPPER_DRIVER_TYPE_TB6600
   #define STEPPER_MAX_SPEED          1000
-  #define STEPPER_ACCELERATION       2000
-  #define STEPPER_STEPS_PER_ROTATION  200
-  #define STEPPER_SPEED               300
+  #define STEPPER_ACCELERATION       1000
+  #define STEPPER_STEPS_PER_ROTATION  800  // Remarque : 800 si DIP switchs TB6600 réglés en 1/4 step
+  #define STEPPER_SPEED               500
   static const char* DRIVER_NAME = "TB6600 (DIR/STEP)";
 #else
   #define STEPPER_MAX_SPEED           300
@@ -104,14 +104,13 @@ DHT dht_2(DHT_2_PIN_DATA, DHT_SENSOR_TYPE);
 DHT dht_3(DHT_3_PIN_DATA, DHT_SENSOR_TYPE);
 DHT dht_4(DHT_4_PIN_DATA, DHT_SENSOR_TYPE);
 
+// AccelStepper::DRIVER → (STEP, DIR)
 AccelStepper stepper(AccelStepper::DRIVER, STEPPER_PIN_STEP, STEPPER_PIN_DIR);
-//                                                       ^^^^        ^^^
-// AccelStepper::DRIVER → (STEP, DIR) — ordre important !
 
 LiquidCrystal_I2C lcd(LCD_ADDRESS, LCD_COLS, LCD_ROWS);
 
 // ============================================================
-//  STRUCTURES DE DONNÉES
+//  STRUCTURES DE DONNÉES & VARIABLES GLOBALES
 // ============================================================
 struct SensorData {
   float temperature = 0.0f;
@@ -119,9 +118,6 @@ struct SensorData {
   bool  valid       = false;
 };
 
-// ============================================================
-//  VARIABLES D'ÉTAT GLOBALES
-// ============================================================
 bool  fanOn           = false;
 bool  humidifierOn    = false;
 bool  autonomousMode  = false;
@@ -145,72 +141,64 @@ int    lcdLogIndex = 0;
 unsigned long lastLogScroll = 0;
 
 // ============================================================
-//  UTILITAIRES LCD LOG
+//  FONCTIONS GESTION STEPPER / POWER
 // ============================================================
 
-void printLCDLine(int row, const String& line) {
-  lcd.setCursor(0, row);
-  lcd.print(line);
-  // Efface le reste de la ligne sans lcd.clear() → évite le scintillement
-  for (int i = line.length(); i < LCD_COLS; i++) lcd.print(' ');
-}
-
-void pushLCDLog(const String& msg) {
-  String text = (msg.length() > LCD_COLS) ? msg.substring(0, LCD_COLS) : msg;
-  // Déduplique les messages consécutifs identiques
-  if (lcdLogCount > 0 && lcdLogBuffer[(lcdLogCount - 1) % LCD_LOG_BUFFER_SIZE] == text) return;
-
-  if (lcdLogCount < LCD_LOG_BUFFER_SIZE) {
-    lcdLogBuffer[lcdLogCount++] = text;
-  } else {
-    // Décale le buffer (FIFO circulaire)
-    for (int i = 0; i < LCD_LOG_BUFFER_SIZE - 1; i++) {
-      lcdLogBuffer[i] = lcdLogBuffer[i + 1];
-    }
-    lcdLogBuffer[LCD_LOG_BUFFER_SIZE - 1] = text;
-    if (lcdLogIndex > 0) lcdLogIndex--;
+void enableStepper() {
+  if (!stepperEnabled) {
+    digitalWrite(STEPPER_ENABLE_PIN, STEPPER_ENABLE_ACTIVE_STATE);
+    delayMicroseconds(100); // Court temps de stabilisation de l'alimentation des bobines
+    stepperEnabled = true;
   }
 }
 
-void setLCDLog(const String& msg) { pushLCDLog(msg); }
-
-String getCurrentLCDLog() {
-  if (lcdLogCount == 0) return "";
-  if (lcdLogIndex >= lcdLogCount) lcdLogIndex = 0;
-  return lcdLogBuffer[lcdLogIndex];
-}
-
-void advanceLCDLog() {
-  if (lcdLogCount > 1) lcdLogIndex = (lcdLogIndex + 1) % lcdLogCount;
-}
-
-void updateLCDScroll(unsigned long now) {
-  if (now - lastLogScroll >= LCD_SCROLL_INTERVAL) {
-    lastLogScroll = now;
-    advanceLCDLog();
+void disableStepper() {
+  if (stepperEnabled) {
+    digitalWrite(STEPPER_ENABLE_PIN, STEPPER_ENABLE_DISABLE_STATE);
+    stepperEnabled = false;
   }
 }
 
 // ============================================================
-//  AFFICHAGE LCD
+//  UTILITAIRES LCD LOG & DISPLAY
 // ============================================================
 
+const int LCD_LOG_BUFFER_SIZE = 6;
+const int LOG_LINE_LEN = 17;
+char lcdLogBuffer[LCD_LOG_BUFFER_SIZE][LOG_LINE_LEN];
+int lcdLogCount = 0;
+int lcdLogIndex = 0;
+
+void pushLCDLog(const char* msg) {
+  // Copie sécurisée limitée à 16 caractères
+  strncpy(lcdLogBuffer[lcdLogIndex], msg, LOG_LINE_LEN - 1);
+  lcdLogBuffer[lcdLogIndex][LOG_LINE_LEN - 1] = '\0';
+  
+  lcdLogIndex = (lcdLogIndex + 1) % LCD_LOG_BUFFER_SIZE;
+  if (lcdLogCount < LCD_LOG_BUFFER_SIZE) lcdLogCount++;
+}
+
+// Formatage rapide du LCD sans allocation dynamique
 void displayStatusOnLCD(float avgTemp, float avgHumid) {
-  // Ligne 1 : "T:37.5C H:45%" + " A" si mode autonome
-  String line1 = "T:" + String(avgTemp, 1) + "C H:" + String((int)avgHumid) + "%";
-  if (autonomousMode) {
-    if ((int)line1.length() <= LCD_COLS - 2)
-      line1 += " A";
-    else
-      line1 = line1.substring(0, LCD_COLS - 2) + " A";
+  char line0[LOG_LINE_LEN];
+  snprintf(line0, sizeof(line0), "T:%.1fC H:%d%% %s", 
+           avgTemp, (int)avgHumid, autonomousMode ? "A" : "");
+  
+  lcd.setCursor(0, 0);
+  lcd.print(line0);
+  // Complète avec des espaces
+  for(int i = strlen(line0); i < 16; i++) lcd.print(' ');
+
+  lcd.setCursor(0, 1);
+  if (lcdLogCount > 0) {
+    int readIdx = (lcdLogIndex - 1 - lcdLogCount + LCD_LOG_BUFFER_SIZE) % LCD_LOG_BUFFER_SIZE;
+    lcd.print(lcdLogBuffer[readIdx]);
+    for(int i = strlen(lcdLogBuffer[readIdx]); i < 16; i++) lcd.print(' ');
   }
-  printLCDLine(0, line1);
-  // Ligne 2 : log courant
-  printLCDLine(1, getCurrentLCDLog());
 }
 
 // ============================================================
-//  WIFI — CONNEXION NON-BLOQUANTE
+//  WIFI & SERVEUR
 // ============================================================
 
 void connectWiFi() {
@@ -234,10 +222,6 @@ void connectWiFi() {
   }
 }
 
-// ============================================================
-//  UTILITAIRES SERVEUR
-// ============================================================
-
 String buildServerUrl(const char* endpoint) {
   return String("http://") + serverIP + ":" + serverPort + endpoint;
 }
@@ -250,10 +234,6 @@ void checkAutonomousMode() {
     setLCDLog("Mode autonome");
   }
 }
-
-// ============================================================
-//  ENVOI DES DONNÉES
-// ============================================================
 
 bool sendDataToServer(const String& jsonPayload) {
   if (autonomousMode || WiFi.status() != WL_CONNECTED) {
@@ -272,7 +252,6 @@ bool sendDataToServer(const String& jsonPayload) {
 
   if (code > 0) {
     Serial.printf("POST /sensor/values → %d\n", code);
-    // ✅ FIX : succès uniquement sur 200 ou 201 (pas sur les 4xx/5xx)
     if (code == HTTP_CODE_OK || code == HTTP_CODE_CREATED) {
       setLCDLog("Serveur OK");
       serverFailCount = 0;
@@ -297,10 +276,6 @@ bool sendDataToServer(const String& jsonPayload) {
   return success;
 }
 
-// ============================================================
-//  RECONNEXION PÉRIODIQUE (mode autonome)
-// ============================================================
-
 void tryReconnectToServer() {
   static unsigned long lastReconnectAttempt = 0;
   if (!autonomousMode) return;
@@ -324,10 +299,6 @@ void tryReconnectToServer() {
     setLCDLog("Serveur retrouve");
   }
 }
-
-// ============================================================
-//  COMMANDES AUTOMATION
-// ============================================================
 
 bool getAutomationStatus() {
   if (autonomousMode || WiFi.status() != WL_CONNECTED) return false;
@@ -378,7 +349,7 @@ bool getStepperCommand() {
         setLCDLog("Stepper ON");
         stepper.setMaxSpeed(STEPPER_SPEED);
         enableStepper();
-        stepper.moveTo(stepper.currentPosition() + STEPPER_ROTATION_STEPS);
+        stepper.move(STEPPER_ROTATION_STEPS); // Utilise move() pour un deplacement relatif
       }
       http.end();
       return true;
@@ -393,18 +364,12 @@ bool getStepperCommand() {
   return false;
 }
 
-// ============================================================
-//  LOGIQUE DE SECOURS (MODE AUTONOME)
-// ============================================================
-
 void applyBackupLogic(float avgTemp, float avgHumid) {
-  // Ventilateur : distribue la chaleur si température trop basse
   bool fan = (avgTemp > 0.0f && avgTemp < TEMP_MIN);
   digitalWrite(FAN_PIN, fan ? HIGH : LOW);
   fanOn = fan;
   if (fan) Serial.println("[AUTO] Fan ON — temp basse");
 
-  // Humidificateur : s'active si humidité insuffisante
   bool humid = (avgHumid > 0.0f && avgHumid < HUMIDITY_MIN);
   digitalWrite(HUMIDIFIER_PIN, humid ? HIGH : LOW);
   humidifierOn = humid;
@@ -412,7 +377,7 @@ void applyBackupLogic(float avgTemp, float avgHumid) {
 }
 
 // ============================================================
-//  CAPTEURS DHT
+//  CAPTEURS DHT & LEDS
 // ============================================================
 
 SensorData readSensor(DHT& dht, int num) {
@@ -448,10 +413,6 @@ void calculateAverages(SensorData sensors[], int count,
   avgHumid = valid > 0 ? hTotal / valid : 0.0f;
 }
 
-// ============================================================
-//  LEDs DE STATUT
-// ============================================================
-
 void initLEDs() {
   const int pins[] = { LED_GREEN_PIN, LED_ORANGE_PIN, LED_RED_PIN, LED_BLUE_PIN };
   for (int p : pins) { pinMode(p, OUTPUT); digitalWrite(p, LOW); }
@@ -482,20 +443,6 @@ void updateStatusLEDs(float avgTemp, float avgHumid, bool serverOk) {
   }
 }
 
-void enableStepper() {
-  if (!stepperEnabled) {
-    digitalWrite(STEPPER_ENABLE_PIN, STEPPER_ENABLE_ACTIVE_STATE);
-    stepperEnabled = true;
-  }
-}
-
-void disableStepper() {
-  if (stepperEnabled) {
-    digitalWrite(STEPPER_ENABLE_PIN, STEPPER_ENABLE_DISABLE_STATE);
-    stepperEnabled = false;
-  }
-}
-
 // ============================================================
 //  BOUTONS
 // ============================================================
@@ -508,7 +455,7 @@ void checkStepperButton() {
     setLCDLog("Stepper manuel");
     stepper.setMaxSpeed(STEPPER_SPEED);
     enableStepper();
-    stepper.moveTo(stepper.currentPosition() + STEPPER_ROTATION_STEPS);
+    stepper.move(STEPPER_ROTATION_STEPS);
   }
 }
 
@@ -520,10 +467,6 @@ void checkLCDScrollButton() {
     advanceLCDLog();
   }
 }
-
-// ============================================================
-//  LOGS SÉRIE
-// ============================================================
 
 void printStatus(SensorData sensors[], int count, float avgTemp, float avgHumid, int failed) {
   Serial.println("\n========== STATUS ==========");
@@ -554,10 +497,12 @@ void setup() {
   Serial.println("\n=== ESP32 Sensor Controller v3 ===");
   Serial.printf("Driver : %s\n", DRIVER_NAME);
   Serial.printf("Vitesse: %d sps  |  Accel: %d sps²\n", STEPPER_MAX_SPEED, STEPPER_ACCELERATION);
-  Serial.printf("Seuils : T [%.2f–%.2f]°C  |  H [%.2f–%.2f]%%\n\n",
-                TEMP_MIN, TEMP_MAX, HUMIDITY_MIN, HUMIDITY_MAX);
 
-  // LCD (init avant WiFi pour afficher les états)
+  // Initialisation du pin Enable AVANT d'assigner l'état désactivé
+  pinMode(STEPPER_ENABLE_PIN, OUTPUT);
+  disableStepper();
+
+  // LCD
   lcd.init();
   lcd.backlight();
   printLCDLine(0, "ESP32 Sensor v3");
@@ -570,11 +515,9 @@ void setup() {
   // Capteurs DHT
   dht_1.begin(); dht_2.begin(); dht_3.begin(); dht_4.begin();
 
-  // Stepper
+  // Stepper Configuration
   stepper.setMaxSpeed(STEPPER_MAX_SPEED);
   stepper.setAcceleration(STEPPER_ACCELERATION);
-  pinMode(STEPPER_ENABLE_PIN, OUTPUT);
-  disableStepper();
 
   // Actionneurs
   pinMode(FAN_PIN,        OUTPUT); digitalWrite(FAN_PIN,        LOW);
@@ -582,9 +525,9 @@ void setup() {
 
   // LEDs
   initLEDs();
-  digitalWrite(LED_BLUE_PIN, HIGH);  // Bleue allumée pendant l'init
+  digitalWrite(LED_BLUE_PIN, HIGH);
 
-  // Boutons avec pull-up interne
+  // Boutons
   pinMode(BUTTON_STEPPER_PIN,    INPUT_PULLUP);
   pinMode(BUTTON_LCD_SCROLL_PIN, INPUT_PULLUP);
 
@@ -597,33 +540,40 @@ void setup() {
 
 void loop() {
   static unsigned long lastSendTime = 0;
+  static unsigned long lastSlowTaskTime = 0;
   unsigned long now = millis();
 
-  // --- Watchdog WiFi (non-bloquant) ---
+  // --- Watchdog WiFi ---
   if (WiFi.status() != WL_CONNECTED && now - lastSendTime >= SEND_INTERVAL) {
     connectWiFi();
   }
 
-  // --- Reconnexion serveur si mode autonome (indépendant de SEND_INTERVAL) ---
   tryReconnectToServer();
 
   // ----------------------------------------------------------------
-  //  CYCLE PRINCIPAL toutes les SEND_INTERVAL ms
+  // 1. GESTION MOTEUR UNIVERSELLE (SANS BLOCAGE ET HAUTE FRÉQUENCE)
+  // ----------------------------------------------------------------
+  if (stepper.distanceToGo() != 0) {
+    enableStepper();   // Active l'alimentation des bobines
+    stepper.run();     // Génère les impulsions de pas
+  } else {
+    disableStepper();  // COUPE LE COURANT TB6600 dès que le mouvement est terminé
+  }
+
+  // ----------------------------------------------------------------
+  // 2. CYCLE PRINCIPAL CAPTEURS / SERVEUR (toutes les SEND_INTERVAL ms)
   // ----------------------------------------------------------------
   if (now - lastSendTime >= SEND_INTERVAL) {
     lastSendTime = now;
 
-    // 1. Lecture des 4 capteurs
     SensorData sensors[4];
     sensors[0] = readSensor(dht_1, 1);
     sensors[1] = readSensor(dht_2, 2);
     sensors[2] = readSensor(dht_3, 3);
     sensors[3] = readSensor(dht_4, 4);
 
-    // 2. Calcul des moyennes
     calculateAverages(sensors, 4, avgTemperature, avgHumidity, numFailedSensors);
 
-    // 3. Construction du payload JSON
     JsonDocument payload;
     for (int i = 0; i < 4; i++) {
       String key = "sensor_" + String(i + 1);
@@ -640,43 +590,33 @@ void loop() {
     String jsonPayload;
     serializeJson(payload, jsonPayload);
 
-    // 4. Envoi au serveur
     serverSuccess = false;
     if (!autonomousMode) {
       serverSuccess = sendDataToServer(jsonPayload);
     }
 
-    // 5. Commandes automation (ou logique de secours)
     if (autonomousMode) {
       applyBackupLogic(avgTemperature, avgHumidity);
     } else if (!getAutomationStatus()) {
       applyBackupLogic(avgTemperature, avgHumidity);
     }
 
-    // 6. Commande stepper via serveur
     if (!autonomousMode) {
       getStepperCommand();
     }
 
-    // 7. Logs série
     printStatus(sensors, 4, avgTemperature, avgHumidity, numFailedSensors);
   }
 
   // ----------------------------------------------------------------
-  //  TÂCHES CONTINUES (toutes les 100 ms)
+  // 3. TÂCHES SECONDAIRES (Rafraîchissement cadencé à 100 ms)
   // ----------------------------------------------------------------
-  checkStepperButton();
-  checkLCDScrollButton();
-  updateLCDScroll(now);
-  updateStatusLEDs(avgTemperature, avgHumidity, serverSuccess || serverConnected);
-  displayStatusOnLCD(avgTemperature, avgHumidity);
-
-  if (stepper.isRunning()) {
-    enableStepper();
-    stepper.run();
-  } else {
-    disableStepper();
+  if (now - lastSlowTaskTime >= 100) {
+    lastSlowTaskTime = now;
+    checkStepperButton();
+    checkLCDScrollButton();
+    updateLCDScroll(now);
+    updateStatusLEDs(avgTemperature, avgHumidity, serverSuccess || serverConnected);
+    displayStatusOnLCD(avgTemperature, avgHumidity);
   }
-
-  delay(100);
 }
