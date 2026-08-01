@@ -265,12 +265,13 @@ void updateLCDScroll(unsigned long now) {
 void displayStatusOnLCD(float avgTemp, float avgHumid) {
   char line0[LCD_COLS + 1];
   bool stepperMoving = stepper.distanceToGo() != 0;
+  const char* wifiState = WiFi.status() == WL_CONNECTED ? "OK" : "--";
   if (autonomousMode) {
-    snprintf(line0, sizeof(line0), "AUTO T:%.1f H:%d%%",
-             avgTemp, (int)avgHumid);
+    snprintf(line0, sizeof(line0), "AUTO W:%s S:%s",
+             wifiState, stepperMoving ? "ON" : "OFF");
   } else {
-    snprintf(line0, sizeof(line0), "T:%.1f H:%d%% %s",
-             avgTemp, (int)avgHumid, stepperMoving ? "S:ON" : "S:OFF");
+    snprintf(line0, sizeof(line0), "T:%.0f H:%d W:%s",
+             avgTemp, (int)avgHumid, wifiState);
   }
   printLCDLine(0, line0);
   printLCDLine(1, getCurrentLCDLog());
@@ -437,6 +438,8 @@ bool getAutomationStatus() {
       shared.serverConnected      = true;
       xSemaphoreGive(stateMutex);
 
+      Serial.println("Server OK");
+      pushLCDLog("Server OK");
       pushLCDLog("Cmd automation");
       http.end();
       return true;
@@ -449,6 +452,7 @@ bool getAutomationStatus() {
     xSemaphoreTake(stateMutex, portMAX_DELAY);
     shared.serverConnected = false;
     xSemaphoreGive(stateMutex);
+    pushLCDLog("Server NOK");
   }
 
   http.end();
@@ -491,6 +495,7 @@ bool getStepperCommand() {
     xSemaphoreTake(stateMutex, portMAX_DELAY);
     shared.serverConnected = false;
     xSemaphoreGive(stateMutex);
+    pushLCDLog("Server NOK");
   }
 
   http.end();
@@ -722,6 +727,9 @@ void printStatus(SensorData sensors[], int count, float avgTemp, float avgHumid,
   Serial.printf("  Stepper: %s (%ld)\n",
                 stepper.distanceToGo() != 0 ? "MOVING" : "IDLE",
                 stepper.distanceToGo());
+  Serial.printf("  Server: %s  WiFi: %s\n",
+                serverConnected ? "OK" : "NOK",
+                WiFi.status() == WL_CONNECTED ? "OK" : "NOK");
   if (autonomousMode) {
     Serial.println("  >>> MODE AUTONOME ACTIF <<<");
   }
