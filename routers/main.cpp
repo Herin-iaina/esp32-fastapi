@@ -1,14 +1,13 @@
-Voici ton code source **entièrement mis à jour pour ArduinoJson v7** !
-
-Toutes les allocations statiques (`StaticJsonDocument`) ont été remplacées par le type universel `JsonDocument`, et les constantes de taille devenues inutiles ont été nettoyées.
-
-```cpp
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <AccelStepper.h>
 #include <LiquidCrystal_I2C.h>
 #include "DHT.h"
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
 
 // ============================================================
 //  SÉLECTION DU DRIVER STEPPER
@@ -75,10 +74,12 @@ const float HUMIDITY_MAX = HUMIDITY_TARGET * (1.0f + TOLERANCE_PERCENT / 100.0f)
 // ============================================================
 //  TIMING & BUFFERS
 // ============================================================
-const unsigned long SEND_INTERVAL        = 5000UL;   // ms entre chaque cycle capteurs
-const unsigned long LCD_SCROLL_INTERVAL  = 3000UL;   // ms entre chaque défilement auto
-const unsigned long RECONNECT_INTERVAL   = 60000UL;  // ms entre tentatives de reconnexion
-const unsigned long WIFI_TIMEOUT         = 15000UL;  // ms max pour connexion WiFi
+const unsigned long SEND_INTERVAL             = 5000UL;   // ms entre chaque cycle capteurs
+const unsigned long LCD_SCROLL_INTERVAL       = 3000UL;   // ms entre chaque défilement auto
+const unsigned long RECONNECT_INTERVAL        = 60000UL;  // ms entre tentatives de reconnexion serveur
+const unsigned long WIFI_TIMEOUT              = 15000UL;  // ms max pour connexion WiFi
+const unsigned long AUTOMATION_POLL_INTERVAL  = 3000UL;   // ms entre chaque poll automation/stepper
+const unsigned long HTTP_TIMEOUT              = 3000UL;   // ms timeout par requête HTTP
 
 const int LCD_LOG_BUFFER_SIZE = 6;
 const int MAX_SERVER_RETRIES  = 10;
@@ -111,6 +112,9 @@ DHT dht_3(DHT_3_PIN_DATA, DHT_SENSOR_TYPE);
 DHT dht_4(DHT_4_PIN_DATA, DHT_SENSOR_TYPE);
 
 // AccelStepper::DRIVER → (STEP, DIR)
+// IMPORTANT : cet objet n'est piloté QUE depuis le core 1 (setup/loop).
+// AccelStepper n'est pas thread-safe, il ne doit jamais être touché
+// depuis la tâche réseau (core 0).
 AccelStepper stepper(AccelStepper::DRIVER, STEPPER_PIN_STEP, STEPPER_PIN_DIR);
 LiquidCrystal_I2C lcd(LCD_ADDRESS, LCD_COLS, LCD_ROWS);
 
@@ -123,12 +127,35 @@ struct SensorData {
   bool  valid       = false;
 };
 
+// ------------------------------------------------------------
+//  ÉTAT PARTAGÉ ENTRE LES DEUX TÂCHES (core 0 = réseau, core 1 = loop)
+//  Toute lecture/écriture doit être protégée par stateMutex.
+// ------------------------------------------------------------
+struct SharedState {
+  // --- Écrit par le core 1 (loop), lu par le core 0 (réseau) ---
+  bool     sensorDataReady = false;   // nouvelle trame capteurs prête à être postée
+  String   pendingPayload;            // JSON à envoyer
+
+  // --- Écrit par le core 0 (réseau), lu par le core 1 (loop) ---
+  bool serverConnected   = false;
+  bool autonomousMode    = false;
+  int  serverFailCount   = 0;
+
+  bool fanCmdFromServer      = false; // dernier ordre reçu du serveur
+  bool humidCmdFromServer    = false;
+  bool automationCmdPending  = false; // un ordre fan/humid vient d'arriver
+
+  bool stepperRequestPending = false; // le serveur demande une rotation
+};
+
+SharedState shared;
+SemaphoreHandle_t stateMutex;
+TaskHandle_t networkTaskHandle;
+
 bool  fanOn           = false;
 bool  humidifierOn    = false;
-bool  autonomousMode  = false;
-bool  serverConnected = false;
-bool  serverSuccess   = false;
-int   serverFailCount = 0;
+bool  autonomousMode  = false;   // copie locale (core 1) de shared.autonomousMode
+bool  serverConnected = false;   // copie locale (core 1) de shared.serverConnected
 
 float avgTemperature  = 0.0f;
 float avgHumidity     = 0.0f;
@@ -147,7 +174,7 @@ int  lcdLogStart = 0;
 unsigned long lastLogScroll = 0;
 
 // ============================================================
-//  FONCTIONS GESTION STEPPER / POWER
+//  FONCTIONS GESTION STEPPER / POWER  (core 1 uniquement)
 // ============================================================
 
 void enableStepper() {
@@ -165,8 +192,22 @@ void disableStepper() {
   }
 }
 
+// Lance une rotation si le moteur est actuellement à l'arrêt.
+// Centralise la règle "pas de nouvelle rotation par-dessus une en cours"
+// pour le bouton ET pour la commande serveur.
+void startStepperRotation(const char* origin) {
+  if (stepper.distanceToGo() != 0) {
+    Serial.printf("Rotation ignoree (%s) — moteur deja en mouvement\n", origin);
+    return;
+  }
+  Serial.printf("Rotation stepper activee (%s)\n", origin);
+  stepper.setMaxSpeed(STEPPER_SPEED);
+  enableStepper();
+  stepper.move(STEPPER_ROTATION_STEPS);
+}
+
 // ============================================================
-//  UTILITAIRES LCD LOG & DISPLAY
+//  UTILITAIRES LCD LOG & DISPLAY  (core 1 uniquement)
 // ============================================================
 
 void printLCDLine(int row, const char* line) {
@@ -223,17 +264,28 @@ void updateLCDScroll(unsigned long now) {
 
 void displayStatusOnLCD(float avgTemp, float avgHumid) {
   char line0[LCD_COLS + 1];
+  bool stepperMoving = stepper.distanceToGo() != 0;
   if (autonomousMode) {
-    snprintf(line0, sizeof(line0), "T:%.1fC H:%d%% A", avgTemp, (int)avgHumid);
+    snprintf(line0, sizeof(line0), "AUTO T:%.1f H:%d%%",
+             avgTemp, (int)avgHumid);
   } else {
-    snprintf(line0, sizeof(line0), "T:%.1fC H:%d%%", avgTemp, (int)avgHumid);
+    snprintf(line0, sizeof(line0), "T:%.1f H:%d%% %s",
+             avgTemp, (int)avgHumid, stepperMoving ? "S:ON" : "S:OFF");
   }
   printLCDLine(0, line0);
   printLCDLine(1, getCurrentLCDLog());
 }
 
+// Note : pushLCDLog() n'est PAS protégé par mutex. Il est appelé depuis les
+// deux tâches (loop ET networkTask). Comme le ring buffer LCD n'est utile
+// qu'à l'affichage (pas de conséquence fonctionnelle en cas de log perdu/
+// dupliqué lors d'une rare collision), on accepte ce compromis plutôt que
+// d'alourdir chaque appel réseau avec un lock dédié. Si tu veux une garantie
+// stricte, entoure le corps de pushLCDLog() avec stateMutex comme pour
+// SharedState.
+
 // ============================================================
-//  WIFI & SERVEUR
+//  WIFI & SERVEUR  — tout ce bloc tourne désormais sur networkTask (core 0)
 // ============================================================
 
 void buildServerUrl(const char* endpoint, char* output, size_t size) {
@@ -247,7 +299,7 @@ void connectWiFi() {
 
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(HOSTNAME);
-  Serial.print("Connexion WiFi...");
+  Serial.println("Connexion WiFi...");
   WiFi.begin(ssid, password);
 
   unsigned long start = millis();
@@ -260,14 +312,15 @@ void connectWiFi() {
     Serial.println("\nConnecte — IP: " + WiFi.localIP().toString());
     pushLCDLog("WiFi connecte");
   } else {
-    Serial.println("\nEchec WiFi");
+    Serial.printf("\nEchec WiFi (statut=%d)\n", WiFi.status());
     pushLCDLog("WiFi echec");
   }
 }
 
-void checkAutonomousMode() {
-  if (!autonomousMode && serverFailCount >= MAX_SERVER_RETRIES) {
-    autonomousMode = true;
+// Doit être appelée avec stateMutex déjà pris par l'appelant.
+void checkAutonomousMode_locked() {
+  if (!shared.autonomousMode && shared.serverFailCount >= MAX_SERVER_RETRIES) {
+    shared.autonomousMode = true;
     Serial.println("\n*** MODE AUTONOME ACTIVE ***");
     Serial.printf("  %d echecs consecutifs\n", MAX_SERVER_RETRIES);
     pushLCDLog("Mode autonome");
@@ -275,11 +328,11 @@ void checkAutonomousMode() {
 }
 
 bool sendDataToServer(const String& jsonPayload) {
-  if (autonomousMode || WiFi.status() != WL_CONNECTED) {
-    if (!autonomousMode) {
-      serverFailCount++;
-      checkAutonomousMode();
-    }
+  if (WiFi.status() != WL_CONNECTED) {
+    xSemaphoreTake(stateMutex, portMAX_DELAY);
+    shared.serverFailCount++;
+    checkAutonomousMode_locked();
+    xSemaphoreGive(stateMutex);
     return false;
   }
 
@@ -287,6 +340,7 @@ bool sendDataToServer(const String& jsonPayload) {
   HTTPClient http;
   char url[128];
   buildServerUrl("/sensor/values", url, sizeof(url));
+  http.setTimeout(HTTP_TIMEOUT);
   http.begin(wifiClient, url);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("x-api-key", apiKey);
@@ -294,44 +348,37 @@ bool sendDataToServer(const String& jsonPayload) {
   int code = http.POST(jsonPayload);
   bool success = false;
 
+  xSemaphoreTake(stateMutex, portMAX_DELAY);
   if (code > 0) {
-    Serial.printf("POST /sensor/values → %d\n", code);
+    Serial.printf("POST /sensor/values -> %d\n", code);
     if (code == HTTP_CODE_OK || code == HTTP_CODE_CREATED) {
       pushLCDLog("Serveur OK");
-      serverFailCount = 0;
-      serverConnected = true;
+      shared.serverFailCount = 0;
+      shared.serverConnected = true;
       success = true;
     } else {
       Serial.printf("Reponse inattendue: %d\n", code);
       char msg[LCD_COLS + 1];
       snprintf(msg, sizeof(msg), "Serveur err %d", code);
       pushLCDLog(msg);
-      serverFailCount++;
-      serverConnected = false;
-      checkAutonomousMode();
+      shared.serverFailCount++;
+      shared.serverConnected = false;
+      checkAutonomousMode_locked();
     }
   } else {
     Serial.printf("POST echec: %s\n", http.errorToString(code).c_str());
     pushLCDLog("POST echec");
-    serverFailCount++;
-    serverConnected = false;
-    checkAutonomousMode();
+    shared.serverFailCount++;
+    shared.serverConnected = false;
+    checkAutonomousMode_locked();
   }
+  xSemaphoreGive(stateMutex);
 
   http.end();
   return success;
 }
 
 void tryReconnectToServer() {
-  static unsigned long lastReconnectAttempt = 0;
-  if (!autonomousMode) {
-    return;
-  }
-  if (millis() - lastReconnectAttempt < RECONNECT_INTERVAL) {
-    return;
-  }
-
-  lastReconnectAttempt = millis();
   if (WiFi.status() != WL_CONNECTED) {
     connectWiFi();
     return;
@@ -342,6 +389,7 @@ void tryReconnectToServer() {
   HTTPClient http;
   char url[128];
   buildServerUrl("/sensor/automation/status", url, sizeof(url));
+  http.setTimeout(HTTP_TIMEOUT);
   http.begin(wifiClient, url);
   http.addHeader("x-api-key", apiKey);
   int code = http.GET();
@@ -349,15 +397,19 @@ void tryReconnectToServer() {
 
   if (code == HTTP_CODE_OK) {
     Serial.println("Serveur accessible — sortie du mode autonome");
-    autonomousMode  = false;
-    serverFailCount = 0;
-    serverConnected = true;
+    Serial.println("MODE NORMAL");
+    xSemaphoreTake(stateMutex, portMAX_DELAY);
+    shared.autonomousMode  = false;
+    shared.serverFailCount = 0;
+    shared.serverConnected = true;
+    xSemaphoreGive(stateMutex);
     pushLCDLog("Serveur retrouve");
+    pushLCDLog("Mode normal");
   }
 }
 
 bool getAutomationStatus() {
-  if (autonomousMode || WiFi.status() != WL_CONNECTED) {
+  if (WiFi.status() != WL_CONNECTED) {
     return false;
   }
 
@@ -365,6 +417,7 @@ bool getAutomationStatus() {
   HTTPClient http;
   char url[128];
   buildServerUrl("/sensor/automation/status", url, sizeof(url));
+  http.setTimeout(HTTP_TIMEOUT);
   http.begin(wifiClient, url);
   http.addHeader("x-api-key", apiKey);
   int code = http.GET();
@@ -376,11 +429,14 @@ bool getAutomationStatus() {
     if (!error) {
       bool fanCmd   = doc["fan"]        | false;
       bool humidCmd = doc["humidifier"] | false;
-      digitalWrite(FAN_PIN,        fanCmd   ? HIGH : LOW);
-      digitalWrite(HUMIDIFIER_PIN, humidCmd ? HIGH : LOW);
-      fanOn        = fanCmd;
-      humidifierOn = humidCmd;
-      serverConnected = true;
+
+      xSemaphoreTake(stateMutex, portMAX_DELAY);
+      shared.fanCmdFromServer     = fanCmd;
+      shared.humidCmdFromServer   = humidCmd;
+      shared.automationCmdPending = true;
+      shared.serverConnected      = true;
+      xSemaphoreGive(stateMutex);
+
       pushLCDLog("Cmd automation");
       http.end();
       return true;
@@ -389,8 +445,10 @@ bool getAutomationStatus() {
     Serial.println(error.c_str());
     pushLCDLog("JSON statut err");
   } else {
-    Serial.printf("GET /automation/status → %d\n", code);
-    serverConnected = false;
+    Serial.printf("GET /automation/status -> %d\n", code);
+    xSemaphoreTake(stateMutex, portMAX_DELAY);
+    shared.serverConnected = false;
+    xSemaphoreGive(stateMutex);
   }
 
   http.end();
@@ -398,7 +456,7 @@ bool getAutomationStatus() {
 }
 
 bool getStepperCommand() {
-  if (autonomousMode || WiFi.status() != WL_CONNECTED) {
+  if (WiFi.status() != WL_CONNECTED) {
     return false;
   }
 
@@ -406,6 +464,7 @@ bool getStepperCommand() {
   HTTPClient http;
   char url[128];
   buildServerUrl("/sensor/automation/stepper", url, sizeof(url));
+  http.setTimeout(HTTP_TIMEOUT);
   http.begin(wifiClient, url);
   http.addHeader("x-api-key", apiKey);
   int code = http.GET();
@@ -416,11 +475,10 @@ bool getStepperCommand() {
     DeserializationError error = deserializeJson(doc, response);
     if (!error) {
       if (doc["stepper"] | false) {
-        Serial.println("Rotation stepper activee (serveur)");
-        pushLCDLog("Stepper ON");
-        stepper.setMaxSpeed(STEPPER_SPEED);
-        enableStepper();
-        stepper.move(STEPPER_ROTATION_STEPS);
+        xSemaphoreTake(stateMutex, portMAX_DELAY);
+        shared.stepperRequestPending = true;
+        xSemaphoreGive(stateMutex);
+        pushLCDLog("Stepper ON (srv)");
       }
       http.end();
       return true;
@@ -429,13 +487,76 @@ bool getStepperCommand() {
     Serial.println(error.c_str());
     pushLCDLog("JSON stepper err");
   } else {
-    Serial.printf("GET /automation/stepper → %d\n", code);
-    serverConnected = false;
+    Serial.printf("GET /automation/stepper -> %d\n", code);
+    xSemaphoreTake(stateMutex, portMAX_DELAY);
+    shared.serverConnected = false;
+    xSemaphoreGive(stateMutex);
   }
 
   http.end();
   return false;
 }
+
+// ============================================================
+//  TÂCHE RÉSEAU — tourne sur le core 0, en boucle indépendante du loop()
+// ============================================================
+void networkTaskFunction(void* pvParameters) {
+  unsigned long lastAutomationPoll   = 0;
+  unsigned long lastReconnectAttempt = 0;
+
+  connectWiFi();
+
+  for (;;) {
+    unsigned long now = millis();
+
+    if (WiFi.status() != WL_CONNECTED) {
+      connectWiFi();
+    }
+
+    bool localAutonomous;
+    xSemaphoreTake(stateMutex, portMAX_DELAY);
+    localAutonomous = shared.autonomousMode;
+    xSemaphoreGive(stateMutex);
+
+    if (localAutonomous) {
+      // En mode autonome : on ne tente qu'une reconnexion périodique,
+      // on n'envoie plus rien au serveur.
+      if (now - lastReconnectAttempt >= RECONNECT_INTERVAL) {
+        lastReconnectAttempt = now;
+        tryReconnectToServer();
+      }
+    } else {
+      // 1) Poste les données capteurs si une nouvelle trame est prête
+      bool   hasData = false;
+      String payloadCopy;
+      xSemaphoreTake(stateMutex, portMAX_DELAY);
+      if (shared.sensorDataReady) {
+        payloadCopy = shared.pendingPayload;
+        shared.sensorDataReady = false;
+        hasData = true;
+      }
+      xSemaphoreGive(stateMutex);
+
+      if (hasData) {
+        sendDataToServer(payloadCopy);
+      }
+
+      // 2) Interroge périodiquement l'automation (fan/humid) et le stepper
+      if (now - lastAutomationPoll >= AUTOMATION_POLL_INTERVAL) {
+        lastAutomationPoll = now;
+        getAutomationStatus();
+        getStepperCommand();
+      }
+    }
+
+    // Cède la main — évite de saturer le CPU / le watchdog du core 0
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+}
+
+// ============================================================
+//  LOGIQUE DE SECOURS (core 1)
+// ============================================================
 
 void applyBackupLogic(float avgTemp, float avgHumid) {
   bool fan = (avgTemp > 0.0f && avgTemp < TEMP_MIN);
@@ -459,6 +580,11 @@ SensorData readSensor(DHT& dht, int num) {
     data.temperature = 0.0f;
     data.humidity    = 0.0f;
   }
+  Serial.printf("Capteur %d: T=%.1f°C H=%.1f%% valid=%d\n",
+                num,
+                data.temperature,
+                data.humidity,
+                data.valid ? 1 : 0);
   return data;
 }
 
@@ -525,11 +651,8 @@ void checkStepperButton() {
   const unsigned long DEBOUNCE = 200;
   if (digitalRead(BUTTON_STEPPER_PIN) == LOW && millis() - lastButtonPress > DEBOUNCE) {
     lastButtonPress = millis();
-    Serial.println("Bouton stepper — rotation manuelle");
     pushLCDLog("Stepper manuel");
-    stepper.setMaxSpeed(STEPPER_SPEED);
-    enableStepper();
-    stepper.move(STEPPER_ROTATION_STEPS);
+    startStepperRotation("bouton");
   }
 }
 
@@ -539,6 +662,46 @@ void checkLCDScrollButton() {
     lastScrollButtonPress = millis();
     Serial.println("Bouton LCD — defilement manuel");
     advanceLCDLog();
+  }
+}
+
+// Récupère les infos écrites par networkTask et les applique côté core 1
+// (digitalWrite fan/humid, déclenchement stepper). Ainsi, AccelStepper et
+// les actionneurs restent pilotés depuis un seul et même core.
+void applyNetworkOutputs() {
+  bool localAutonomous;
+  bool localServerConnected;
+  bool automationPending;
+  bool fanCmd = false, humidCmd = false;
+  bool stepperPending;
+
+  xSemaphoreTake(stateMutex, portMAX_DELAY);
+  localAutonomous      = shared.autonomousMode;
+  localServerConnected = shared.serverConnected;
+  automationPending     = shared.automationCmdPending;
+  if (automationPending) {
+    fanCmd   = shared.fanCmdFromServer;
+    humidCmd = shared.humidCmdFromServer;
+    shared.automationCmdPending = false;
+  }
+  stepperPending = shared.stepperRequestPending;
+  if (stepperPending) {
+    shared.stepperRequestPending = false;
+  }
+  xSemaphoreGive(stateMutex);
+
+  autonomousMode  = localAutonomous;
+  serverConnected = localServerConnected;
+
+  if (!autonomousMode && automationPending) {
+    digitalWrite(FAN_PIN,        fanCmd   ? HIGH : LOW);
+    digitalWrite(HUMIDIFIER_PIN, humidCmd ? HIGH : LOW);
+    fanOn        = fanCmd;
+    humidifierOn = humidCmd;
+  }
+
+  if (stepperPending) {
+    startStepperRotation("serveur");
   }
 }
 
@@ -552,10 +715,13 @@ void printStatus(SensorData sensors[], int count, float avgTemp, float avgHumid,
                   sensors[i].valid ? "" : "[ERREUR]");
   }
   Serial.printf("  Moyenne   : %.2f°C, %.2f%%\n", avgTemp, avgHumid);
-  Serial.printf("  Seuils    : T [%.2f–%.2f]  H [%.2f–%.2f]\n",
+  Serial.printf("  Seuils    : T [%.2f-%.2f]  H [%.2f-%.2f]\n",
                 TEMP_MIN, TEMP_MAX, HUMIDITY_MIN, HUMIDITY_MAX);
   Serial.printf("  Fan: %s  |  Humidif: %s  |  Defauts: %d\n",
                 fanOn ? "ON" : "OFF", humidifierOn ? "ON" : "OFF", failed);
+  Serial.printf("  Stepper: %s (%ld)\n",
+                stepper.distanceToGo() != 0 ? "MOVING" : "IDLE",
+                stepper.distanceToGo());
   if (autonomousMode) {
     Serial.println("  >>> MODE AUTONOME ACTIF <<<");
   }
@@ -566,20 +732,18 @@ void setup() {
   Serial.begin(115200);
   delay(1500);
 
-  Serial.println("\n=== ESP32 Sensor Controller v3 ===");
+  Serial.println("\n=== ESP32 Sensor Controller v4 (stepper non-bloquant) ===");
   Serial.printf("Driver : %s\n", DRIVER_NAME);
-  Serial.printf("Vitesse: %d sps  |  Accel: %d sps²\n", STEPPER_MAX_SPEED, STEPPER_ACCELERATION);
+  Serial.printf("Vitesse: %d sps  |  Accel: %d sps^2\n", STEPPER_MAX_SPEED, STEPPER_ACCELERATION);
 
   pinMode(STEPPER_ENABLE_PIN, OUTPUT);
   disableStepper();
 
   lcd.init();
   lcd.backlight();
-  printLCDLine(0, "ESP32 Sensor v3");
+  printLCDLine(0, "ESP32 Sensor v4");
   printLCDLine(1, "Init...");
   pushLCDLog("Initializing...");
-
-  connectWiFi();
 
   dht_1.begin();
   dht_2.begin();
@@ -600,20 +764,31 @@ void setup() {
   pinMode(BUTTON_STEPPER_PIN,    INPUT_PULLUP);
   pinMode(BUTTON_LCD_SCROLL_PIN, INPUT_PULLUP);
 
-  Serial.println("Initialisation terminee.\n");
+  // --- Mutex + tâche réseau sur le core 0 ---
+  stateMutex = xSemaphoreCreateMutex();
+
+  xTaskCreatePinnedToCore(
+    networkTaskFunction,   // fonction de la tâche
+    "NetworkTask",         // nom (debug)
+    8192,                  // taille de pile (les buffers HTTP/JSON sont gourmands)
+    NULL,                  // paramètre
+    1,                     // priorité
+    &networkTaskHandle,    // handle
+    0                       // épinglée sur le core 0 (Arduino loop tourne sur le core 1)
+  );
+
+  Serial.println("Initialisation terminee. Tache reseau demarree sur le core 0.\n");
 }
 
 void loop() {
-  static unsigned long lastSendTime = 0;
+  static unsigned long lastSendTime     = 0;
   static unsigned long lastSlowTaskTime = 0;
   unsigned long now = millis();
 
-  if (WiFi.status() != WL_CONNECTED && now - lastSendTime >= SEND_INTERVAL) {
-    connectWiFi();
-  }
+  // Récupère et applique ce que la tâche réseau a produit depuis le dernier tour
+  applyNetworkOutputs();
 
-  tryReconnectToServer();
-
+  // Le stepper est géré à CHAQUE itération de loop(), jamais bloqué par le réseau
   if (stepper.distanceToGo() != 0) {
     enableStepper();
     stepper.run();
@@ -623,6 +798,7 @@ void loop() {
 
   if (now - lastSendTime >= SEND_INTERVAL) {
     lastSendTime = now;
+    Serial.println("Lecture des capteurs...");
 
     SensorData sensors[4];
     sensors[0] = readSensor(dht_1, 1);
@@ -650,19 +826,19 @@ void loop() {
     String jsonPayload;
     serializeJson(payload, jsonPayload);
 
-    serverSuccess = false;
+    // On ne fait plus l'appel HTTP ici : on dépose juste la trame pour
+    // que networkTask (core 0) la poste dès qu'elle est disponible.
     if (!autonomousMode) {
-      serverSuccess = sendDataToServer(jsonPayload);
+      xSemaphoreTake(stateMutex, portMAX_DELAY);
+      shared.pendingPayload   = jsonPayload;
+      shared.sensorDataReady  = true;
+      xSemaphoreGive(stateMutex);
     }
 
-    if (autonomousMode) {
+    // Logique de secours : active si on est autonome, ou si la dernière
+    // commande automation connue n'a pas pu être obtenue du serveur.
+    if (autonomousMode || !serverConnected) {
       applyBackupLogic(avgTemperature, avgHumidity);
-    } else if (!getAutomationStatus()) {
-      applyBackupLogic(avgTemperature, avgHumidity);
-    }
-
-    if (!autonomousMode) {
-      getStepperCommand();
     }
 
     printStatus(sensors, 4, avgTemperature, avgHumidity, numFailedSensors);
@@ -673,9 +849,11 @@ void loop() {
     checkStepperButton();
     checkLCDScrollButton();
     updateLCDScroll(now);
-    updateStatusLEDs(avgTemperature, avgHumidity, serverSuccess || serverConnected);
+    updateStatusLEDs(avgTemperature, avgHumidity, serverConnected);
     displayStatusOnLCD(avgTemperature, avgHumidity);
   }
-}
 
-```
+  // Petite respiration pour laisser le scheduler FreeRTOS souffler
+  // (utile même si loop() ne bloque plus sur le réseau)
+  delay(1);
+}
