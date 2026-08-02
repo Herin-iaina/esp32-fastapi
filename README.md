@@ -2595,9 +2595,9 @@ Ce document décrit le câblage complet du système de contrôle d'incubateur ba
 Chaque capteur DHT22 comporte 4 broches (vue de face, de gauche à droite : 1=VCC, 2=DATA, 3=NC, 4=GND).
 
 - DHT22 #1 : VCC → 3.3V, DATA → GPIO 33, GND → GND.
-- DHT22 #2 : VCC → 3.3V, DATA → GPIO 34, GND → GND.
-- DHT22 #3 : VCC → 3.3V, DATA → GPIO 35, GND → GND.
-- DHT22 #4 : VCC → 3.3V, DATA → GPIO 36, GND → GND.
+- DHT22 #2 : VCC → 3.3V, DATA → GPIO 25, GND → GND.
+- DHT22 #3 : VCC → 3.3V, DATA → GPIO 26, GND → GND.
+- DHT22 #4 : VCC → 3.3V, DATA → GPIO 4, GND → GND.
 
 Pour chaque DHT22 : placer une résistance de 10kΩ entre VCC et DATA.
 
