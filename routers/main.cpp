@@ -9,6 +9,22 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include <esp_task_wdt.h>
+#include "soc/rtc_cntl_reg.h"
+#include "soc/soc.h"
+
+// ============================================================
+//  ⚠️ DIAGNOSTIC UNIQUEMENT — À RETIRER APRÈS TEST ⚠️
+// ============================================================
+// Désactive le détecteur de brownout matériel. Ça ne corrige RIEN — ça
+// masque juste le symptôme (le reset), pour vérifier si le blocage vient
+// bien d'un sous-voltage transitoire. Si avec ça le boot va au bout et que
+// tu observes à la place des comportements bizarres (WiFi qui échoue,
+// capteurs qui donnent n'importe quoi, redémarrages aléatoires ailleurs),
+// ça confirme un vrai problème d'alimentation à régler avant d'aller plus
+// loin. Ne JAMAIS garder ça sur un système en usage réel : sans BOD, un
+// sous-voltage peut corrompre la flash/l'exécution au lieu de proprement
+// redémarrer.
+// #define DEBUG_DISABLE_BOD 0
 
 // ============================================================
 //  SÉLECTION DU DRIVER STEPPER
@@ -22,9 +38,14 @@
 // ============================================================
 #define DHT_SENSOR_TYPE     DHT22
 #define DHT_1_PIN_DATA      33
-#define DHT_2_PIN_DATA      34
-#define DHT_3_PIN_DATA      35
-#define DHT_4_PIN_DATA      36
+// GPIO 34/35/36 sont des broches ENTRÉE SEULE sur l'ESP32 (pas de driver de
+// sortie physique) : le protocole DHT a besoin d'envoyer un signal de
+// démarrage (ligne tirée au bas) avant de lire la réponse, donc ces
+// broches ne peuvent PAS fonctionner avec un DHT, pull-up externe ou pas.
+// Rebranche physiquement les capteurs 2/3/4 sur ces broches à la place :
+#define DHT_2_PIN_DATA      25
+#define DHT_3_PIN_DATA      26
+#define DHT_4_PIN_DATA      4
 
 #define STEPPER_PIN_DIR     12
 #define STEPPER_PIN_STEP    13
@@ -305,6 +326,13 @@ void connectWiFi() {
   }
 
   WiFi.mode(WIFI_STA);
+  // Réduit la puissance d'émission WiFi pour limiter les pics de courant
+  // (jusqu'à ~400-500mA en pleine puissance) qui peuvent faire chuter le
+  // rail 3.3V sous le seuil du détecteur de brownout sur une alimentation
+  // USB faible/longue. Ce n'est qu'une mitigation logicielle : le vrai fix
+  // reste une alimentation capable de fournir les pics de courant (voir
+  // note plus bas) + un condensateur de découplage proche de l'ESP32.
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);
   WiFi.setHostname(HOSTNAME);
   Serial.println(F("Connexion WiFi..."));
   WiFi.begin(ssid, password);
@@ -761,6 +789,10 @@ void printStatus(SensorData sensors[], int count, float avgTemp, float avgHumid,
 }
 
 void setup() {
+#if DEBUG_DISABLE_BOD
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // ⚠️ diagnostic seulement, voir note plus haut
+#endif
+
   Serial.begin(115200);
   delay(1000);
 
