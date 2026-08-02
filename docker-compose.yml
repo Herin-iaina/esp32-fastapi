@@ -45,9 +45,9 @@ services:
     container_name: esp32-db
     restart: always
     environment:
-      - POSTGRES_USER="${POSTGRES_USER:-user}"
-      - POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-password}"
-      - POSTGRES_DB="${POSTGRES_DB:-incubator_db}"
+      - POSTGRES_USER=${POSTGRES_USER:-user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+      - POSTGRES_DB=${POSTGRES_DB:-smartelia_db}
     ports:
       - "5432:5432"
     volumes:
@@ -55,7 +55,7 @@ services:
     networks:
       - incubator_network
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U \"${POSTGRES_USER:-user}\" -d \"${POSTGRES_DB:-incubator_db}\"" ]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d ${POSTGRES_DB:-smartelia_db}" ]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -13,7 +13,6 @@ function Dashboard() {
 
   useEffect(() => {
     logger.logInfo('Dashboard', 'Dashboard monté, initialisation des données')
-    // Ne plus forcer les données fictives
     const load = () => {
       logger.logDebug('Dashboard', 'Chargement des données')
       fetchData(false)
@@ -22,9 +21,14 @@ function Dashboard() {
 
     load()
     const interval = setInterval(load, 10000) // Refresh every 10s
-    
+
     return () => {
-    logger.logDebug('Dashboard', 'État de chargement...')
+      clearInterval(interval)
+      logger.logDebug('Dashboard', 'Dashboard démonté, arrêt du rafraîchissement')
+    }
+  }, [fetchData, fetchHistory])
+
+  if (loading && !data) {
     return <div className="loading">Chargement des données...</div>
   }
 
@@ -35,12 +39,6 @@ function Dashboard() {
 
   if (isMockData) {
     logger.logInfo('Dashboard', 'Données fictives en cours d\'utilisation')
-  if (loading && !data) {
-    return <div className="loading">Chargement des données...</div>
-  }
-
-  if (!data) {
-    return <div className="error">Aucune donnée disponible</div>
   }
 
   // Préparer les données pour les graphiques
