@@ -766,6 +766,15 @@ void setup() {
 
   Serial.println(F("\n=== ESP32 Incubator Controller v4.2 ==="));
 
+  // Les mutex doivent être créés en tout premier : pushLCDLog() (appelée dès
+  // le premier lcd.init()/printLCDLine ci-dessous) prend lcdLogMutex, et
+  // sendDataToServer()/checkAutonomousMode_locked() prennent stateMutex. Tant
+  // que ces handles valent NULL (valeur par défaut avant création), tout
+  // xSemaphoreTake() dessus déclenche l'assertion FreeRTOS
+  // "xQueueSemaphoreTake ... (( pxQueue ))" et fait rebooter la carte.
+  stateMutex  = xSemaphoreCreateMutex();
+  lcdLogMutex = xSemaphoreCreateMutex();
+
   // FIX 4 : Rétrocompatibilité multi-versions ESP32 Arduino Core (v2.x vs v3.x)
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
   esp_task_wdt_config_t twdt_config = {
@@ -807,9 +816,6 @@ void setup() {
 
   pinMode(BUTTON_STEPPER_PIN,    INPUT_PULLUP);
   pinMode(BUTTON_LCD_SCROLL_PIN, INPUT_PULLUP);
-
-  stateMutex  = xSemaphoreCreateMutex();
-  lcdLogMutex = xSemaphoreCreateMutex();
 
   xTaskCreatePinnedToCore(
     networkTaskFunction,
