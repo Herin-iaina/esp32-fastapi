@@ -5,6 +5,13 @@
 
 set -e
 
+# Charger les variables d'environnement du projet
+if [ -f .env ]; then
+    set -o allexport
+    . .env
+    set +o allexport
+fi
+
 echo "🚀 Démarrage du Système d'Incubation..."
 echo ""
 
@@ -30,7 +37,7 @@ docker compose up -d
 echo "⏳ Attente de PostgreSQL..."
 max_attempts=30
 attempt=0
-while ! docker exec esp32-db pg_isready -U user -d smartelia_db &>/dev/null; do
+while ! docker exec esp32-db pg_isready -U "${POSTGRES_USER:-user}" -d "${POSTGRES_DB:-smartelia_db}" &>/dev/null; do
     if [ $attempt -ge $max_attempts ]; then
         echo "❌ PostgreSQL n'est pas disponible après 30 tentatives"
         exit 1
@@ -72,8 +79,8 @@ echo "   📚 API Docs:     http://localhost:8000/docs"
 echo "   🐘 PostgreSQL:   localhost:5432"
 echo ""
 echo "🔐 Credentials:"
-echo "   Username: admin"
-echo "   Password: test123456"
+echo "   Username: ${APP_ADMIN_USERNAME:-admin}"
+echo "   Password: ${APP_ADMIN_PASSWORD:-test123456}"
 echo ""
 echo "📖 Documentation:"
 echo "   - README.md (Documentation centralisée)"
