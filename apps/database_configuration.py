@@ -24,11 +24,11 @@ load_dotenv(dotenv_path=os.getenv("ENV_PATH", ".env"))
 
 # Configuration directe depuis les variables d'environnement
 DB_CONFIG = {
-    "host": os.getenv("DB_HOST", "127.0.0.1"),
-    "port": int(os.getenv("DB_PORT", "5432")),
-    "user": os.getenv("DB_USER", "ted"),
-    "password": os.getenv("DB_PASSWORD", "ombre1235"),
-    "database": os.getenv("DB_NAME", "sensor"),
+    "host": os.getenv("POSTGRES_HOST", os.getenv("DB_HOST", "127.0.0.1")),
+    "port": int(os.getenv("POSTGRES_PORT", os.getenv("DB_PORT", "5432"))),
+    "user": os.getenv("POSTGRES_USER", os.getenv("DB_USER", "ted")),
+    "password": os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", "ombre1235")),
+    "database": os.getenv("POSTGRES_DB", os.getenv("DB_NAME", "sensor")),
     "pool_size": int(os.getenv("DB_POOL_SIZE", "10")),
     "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "20"))
 }
@@ -38,13 +38,41 @@ class DatabaseSettings(BaseSettings):
     """Configuration de la base de données via variables d'environnement"""
     # Vérifier d'abord APP_DATABASE_URL (Docker), sinon utiliser les paramètres individuels
     database_url: Optional[str] = Field(default=None, alias="APP_DATABASE_URL", description="URL de connexion complète")
-    db_host: constr(strip_whitespace=True, min_length=1) = Field(default="127.0.0.1", description="Adresse de la base")
-    db_port: conint(ge=1, le=65535) = Field(default=5432, description="Port de la base")
-    db_user: constr(strip_whitespace=True, min_length=1) = Field(default="ted", description="Utilisateur")
-    db_password: str = Field(default="ombre1235", description="Mot de passe")
-    db_name: constr(strip_whitespace=True, min_length=1) = Field(default="sensor", description="Nom de la base")
-    db_pool_size: conint(ge=1, le=100) = Field(default=10, description="Taille du pool")
-    db_max_overflow: conint(ge=0, le=100) = Field(default=20, description="Overflow du pool")
+    db_host: constr(strip_whitespace=True, min_length=1) = Field(
+        default="127.0.0.1",
+        description="Adresse de la base",
+        env=["DB_HOST", "POSTGRES_HOST"],
+    )
+    db_port: conint(ge=1, le=65535) = Field(
+        default=5432,
+        description="Port de la base",
+        env=["DB_PORT", "POSTGRES_PORT"],
+    )
+    db_user: constr(strip_whitespace=True, min_length=1) = Field(
+        default="ted",
+        description="Utilisateur",
+        env=["DB_USER", "POSTGRES_USER"],
+    )
+    db_password: str = Field(
+        default="ombre1235",
+        description="Mot de passe",
+        env=["DB_PASSWORD", "POSTGRES_PASSWORD"],
+    )
+    db_name: constr(strip_whitespace=True, min_length=1) = Field(
+        default="sensor",
+        description="Nom de la base",
+        env=["DB_NAME", "POSTGRES_DB"],
+    )
+    db_pool_size: conint(ge=1, le=100) = Field(
+        default=10,
+        description="Taille du pool",
+        env=["DB_POOL_SIZE"],
+    )
+    db_max_overflow: conint(ge=0, le=100) = Field(
+        default=20,
+        description="Overflow du pool",
+        env=["DB_MAX_OVERFLOW"],
+    )
 
     model_config = {
         "env_file": ".env",

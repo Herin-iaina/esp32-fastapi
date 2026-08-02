@@ -5,7 +5,7 @@ from typing import Literal
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="APP_", env_file=".env", extra="ignore")
 
-    app_name: str = "Smartelia API"
+    app_name: str = "incubator API"
     environment: Literal["dev", "staging", "prod"] = "prod"
     secret_key: SecretStr
     access_token_expires_minutes: int = 30
