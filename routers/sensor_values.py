@@ -290,6 +290,8 @@ async def get_values(mock: bool = Query(False, description="Utiliser les donnée
                         "is_mock": False
                     }
                 )
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Erreur lors de la lecture de la base: {e}", exc_info=True)
                 raise HTTPException(
