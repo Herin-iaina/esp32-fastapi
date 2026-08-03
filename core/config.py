@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     app_name: str = "incubator API"
     environment: Literal["dev", "staging", "prod"] = "prod"
     secret_key: SecretStr
+    sensor_api_key: str
     access_token_expires_minutes: int = 30
     cors_origins: list[str] = Field(default_factory=list)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
@@ -38,5 +39,12 @@ class Settings(BaseSettings):
         if len(v.get_secret_value()) < 32:
             raise ValueError("Secret key must be at least 32 characters long")
         return v
+
+    @field_validator("sensor_api_key")
+    @classmethod
+    def validate_sensor_api_key(cls, v):
+        if not v or len(v.strip()) < 16:
+            raise ValueError("Sensor API key must be at least 16 characters long")
+        return v.strip()
 
 settings = Settings()

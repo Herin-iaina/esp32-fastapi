@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { logger } from '../utils/logger'
 import './DebugPanel.css'
-import { ChevronDown, X, RotateCcw, Copy, Download } from 'lucide-react'
+import { X, RotateCcw, Copy, Download } from 'lucide-react'
 
 interface DebugPanelProps {
   isOpen?: boolean

@@ -3,7 +3,7 @@ import datetime
 from datetime import timezone
 from typing import Dict, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status, Query
 from pydantic import BaseModel, ValidationError
 
 from core.config import settings
@@ -23,17 +23,25 @@ class APIResponse(BaseModel):
     success: bool = True
 
 
-def get_api_key(api_key: str) -> str:
+def get_api_key(
+    x_api_key: str | None = Header(None, alias="x-api-key"),
+    api_key: str | None = None,
+) -> str:
     """
-    Valide la clé API (fonction à adapter selon votre système d'authentification)
+    Valide la clé API envoyée par l'ESP.
     """
-    # À implémenter selon votre logique d'authentification
-    if not api_key:
+    effective_key = x_api_key or api_key
+    if not effective_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Clé API manquante"
         )
-    return api_key
+    if effective_key != settings.sensor_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Clé API invalide"
+        )
+    return effective_key
 
 
 @router.post("/values", response_model=APIResponse, tags=["Données"])

@@ -10,6 +10,7 @@ services:
     environment:
       - APP_DATABASE_URL=${APP_DATABASE_URL}
       - APP_ENVIRONMENT=${APP_ENVIRONMENT}
+      - APP_SECRET_KEY=${APP_SECRET_KEY}
       - PYTHONUNBUFFERED=1
     depends_on:
       db:

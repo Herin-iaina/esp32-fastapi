@@ -17,12 +17,10 @@ class Logger {
   private maxLogs = 500;
 
   private formatTimestamp(): string {
-    return new Date().toLocaleTimeString('fr-FR', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      fractionalSecondDigits: 3
-    });
+    const date = new Date()
+    const pad = (value: number) => value.toString().padStart(2, '0')
+    const milliseconds = date.getMilliseconds().toString().padStart(3, '0')
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${milliseconds}`
   }
 
   private createLogEntry(level: LogLevel, component: string, action: string, details?: any): LogEntry {
