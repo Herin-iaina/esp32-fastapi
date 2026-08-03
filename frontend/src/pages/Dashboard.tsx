@@ -1,18 +1,40 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, 
-  ResponsiveContainer, Area, AreaChart 
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, 
+  ResponsiveContainer 
 } from 'recharts'
 import { useSensorStore } from '../store/sensorStore'
 import SensorCard from '../components/SensorCard'
 import StatusCard from '../components/StatusCard'
 import HistoryTable from '../components/HistoryTable'
 import './Dashboard.css'
-import { Thermometer, Droplets, Wind, Zap, TestTube, TrendingUp, TrendingDown, Activity } from 'lucide-react'
+import { Thermometer, Droplets, Wind, Zap, TestTube, TrendingUp, TrendingDown, Activity, Layers } from 'lucide-react'
 import { logger } from '../utils/logger'
+
+const SENSOR_LINE_COLORS: Record<string, string> = {
+  sensor_01: '#ef4444', // Rouge
+  sensor_02: '#3b82f6', // Bleu
+  sensor_03: '#10b981', // Vert
+  sensor_04: '#f59e0b', // Amber
+  sensor_05: '#8b5cf6', // Violet
+  sensor_06: '#ec4899', // Rose
+  sensor_07: '#06b6d4', // Cyan
+  sensor_08: '#f97316', // Orange
+}
+
+const DEFAULT_LINE_COLORS = [
+  '#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'
+]
+
+function getSensorLineColor(sensorName: string, index: number): string {
+  return SENSOR_LINE_COLORS[sensorName] || DEFAULT_LINE_COLORS[index % DEFAULT_LINE_COLORS.length]
+}
 
 function Dashboard() {
   const { data, history, loading, fetchData, fetchHistory, isMockData } = useSensorStore()
+
+  // Capteurs masqués sur le graphique
+  const [hiddenSensors, setHiddenSensors] = useState<string[]>([])
 
   useEffect(() => {
     logger.logInfo('Dashboard', 'Dashboard monté, initialisation des données')
@@ -48,7 +70,7 @@ function Dashboard() {
       return diff > oneDayMs && diff <= twoDaysMs
     })
 
-    // Moyenne d'Aujourd'hui (utilisant data.average_temperature ou calcul à partir de history)
+    // Moyenne d'Aujourd'hui
     const avgTempToday = data.average_temperature
     const avgHumidToday = data.average_humidity
 
@@ -60,7 +82,6 @@ function Dashboard() {
       avgTempYest = yesterdayReadings.reduce((sum, item) => sum + item.temperature, 0) / yesterdayReadings.length
       avgHumidYest = yesterdayReadings.reduce((sum, item) => sum + item.humidity, 0) / yesterdayReadings.length
     } else {
-      // Fallback réaliste si l'historique disponible est court (ex: J-1 = J - 1.2°C)
       avgTempYest = Math.max(0, avgTempToday - 0.8)
       avgHumidYest = Math.max(0, avgHumidToday + 2.5)
     }
@@ -90,33 +111,58 @@ function Dashboard() {
     }
   }, [data, history])
 
-  // Données pour la courbe d'évolution globale (remplaçant le Radar)
-  const evolutionChartData = useMemo(() => {
-    if (!history || history.length === 0) return []
+  // Données d'évolution individuelle par capteur (au lieu d'une moyenne globale)
+  const { sensorEvolutionData, availableSensors } = useMemo(() => {
+    if (!history || history.length === 0) return { sensorEvolutionData: [], availableSensors: [] }
 
     // Trier par ordre chronologique
     const crono = [...history].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
     
-    // Regrouper par heure pour avoir un tracé lisse
-    const mapByHour: Record<string, { totalTemp: number; totalHumid: number; count: number; rawTime: string }> = {}
+    const sensorSet = new Set<string>()
+
+    // Regrouper par heure et par capteur
+    const mapByHour: Record<string, Record<string, { totalTemp: number; totalHumid: number; count: number }>> = {}
 
     crono.forEach(item => {
+      sensorSet.add(item.sensor)
       const date = new Date(item.timestamp)
       const label = `${date.getHours().toString().padStart(2, '0')}:00`
+      
       if (!mapByHour[label]) {
-        mapByHour[label] = { totalTemp: 0, totalHumid: 0, count: 0, rawTime: item.timestamp }
+        mapByHour[label] = {}
       }
-      mapByHour[label].totalTemp += item.temperature
-      mapByHour[label].totalHumid += item.humidity
-      mapByHour[label].count += 1
+      if (!mapByHour[label][item.sensor]) {
+        mapByHour[label][item.sensor] = { totalTemp: 0, totalHumid: 0, count: 0 }
+      }
+      mapByHour[label][item.sensor].totalTemp += item.temperature
+      mapByHour[label][item.sensor].totalHumid += item.humidity
+      mapByHour[label][item.sensor].count += 1
     })
 
-    return Object.entries(mapByHour).map(([label, val]) => ({
-      time: label,
-      temperature: Number((val.totalTemp / val.count).toFixed(1)),
-      humidity: Number((val.totalHumid / val.count).toFixed(1))
-    })).slice(-24) // Garder les 24 derniers points d'heures
+    const sensorList = Array.from(sensorSet).sort()
+
+    const chartData = Object.entries(mapByHour).map(([label, sensorsMap]) => {
+      const point: Record<string, any> = { time: label }
+      sensorList.forEach(s => {
+        const val = sensorsMap[s]
+        if (val && val.count > 0) {
+          point[`${s}_temp`] = Number((val.totalTemp / val.count).toFixed(1))
+          point[`${s}_humid`] = Number((val.totalHumid / val.count).toFixed(1))
+        }
+      })
+      return point
+    }).slice(-24)
+
+    return { sensorEvolutionData: chartData, availableSensors: sensorList }
   }, [history])
+
+  const toggleSensorVisibility = (sensorName: string) => {
+    setHiddenSensors(prev => 
+      prev.includes(sensorName)
+        ? prev.filter(s => s !== sensorName)
+        : [...prev, sensorName]
+    )
+  }
 
   if (loading && !data) {
     return (
@@ -248,29 +294,59 @@ function Dashboard() {
           </ResponsiveContainer>
         </div>
 
-        {/* Courbe d'Évolution Globale (Remplacement du Radar) */}
+        {/* Courbe d'Analyse Comparative par Capteur (Remplacement de la moyenne globale) */}
         <div className="chart-card">
           <div className="chart-header-row">
-            <h3><Activity size={20} /> Courbe d'Évolution Globale</h3>
-            <span className="sub-tag">24 Dernières Heures</span>
+            <h3><Activity size={20} /> Courbe comparative Température + Humidité par capteur</h3>
+            <div className="chart-controls-group">
+              <span className="sub-tag">24h</span>
+            </div>
           </div>
 
+          {/* Badges de filtrage individuel des capteurs */}
+          {availableSensors.length > 0 && (
+            <div className="sensor-filter-pills">
+              <span className="filter-pill-label"><Layers size={13} /> Capteurs :</span>
+              {availableSensors.map((sensorName, idx) => {
+                const color = getSensorLineColor(sensorName, idx)
+                const isHidden = hiddenSensors.includes(sensorName)
+                return (
+                  <button
+                    key={sensorName}
+                    type="button"
+                    className={`sensor-pill ${isHidden ? 'hidden' : 'active'}`}
+                    style={{
+                      borderColor: color,
+                      backgroundColor: isHidden ? 'transparent' : `${color}18`,
+                      color: isHidden ? 'var(--text-secondary, #94a3b8)' : 'var(--text-primary, #0f172a)'
+                    }}
+                    onClick={() => toggleSensorVisibility(sensorName)}
+                  >
+                    <span className="pill-dot" style={{ backgroundColor: isHidden ? '#cbd5e1' : color }} />
+                    {sensorName}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
           <ResponsiveContainer width="100%" height={320}>
-            <AreaChart data={evolutionChartData} margin={{ top: 15, right: 30, left: 10, bottom: 5 }}>
-              <defs>
-                <linearGradient id="tempGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#ef4444" stopOpacity={0.4}/>
-                  <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
-                </linearGradient>
-                <linearGradient id="humidGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.4}/>
-                  <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                </linearGradient>
-              </defs>
+            <LineChart data={sensorEvolutionData} margin={{ top: 15, right: 30, left: 10, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
               <XAxis dataKey="time" tick={{ fontSize: 11 }} />
-              <YAxis yAxisId="temp" stroke="#ef4444" domain={['auto', 'auto']} unit="°C" tick={{ fontSize: 11 }} />
-              <YAxis yAxisId="humid" orientation="right" stroke="#3b82f6" domain={[0, 100]} unit="%" tick={{ fontSize: 11 }} />
+              <YAxis 
+                yAxisId="left"
+                domain={['auto', 'auto']} 
+                tick={{ fontSize: 11 }} 
+                stroke="#ef4444"
+              />
+              <YAxis 
+                yAxisId="right"
+                orientation="right"
+                domain={[0, 100]}
+                tick={{ fontSize: 11 }} 
+                stroke="#3b82f6"
+              />
               <Tooltip 
                 contentStyle={{
                   backgroundColor: 'var(--bg-primary, #1e293b)',
@@ -279,29 +355,42 @@ function Dashboard() {
                   boxShadow: '0 8px 20px rgba(0,0,0,0.2)',
                   color: 'var(--text-primary, #f8fafc)'
                 }}
+                formatter={(value: any, name: any) => [`${value}`, String(name)]}
               />
               <Legend verticalAlign="top" height={36} />
-              <Area 
-                yAxisId="temp"
-                type="monotone" 
-                dataKey="temperature" 
-                name="Température Moyenne (°C)" 
-                stroke="#ef4444" 
-                strokeWidth={3}
-                fillOpacity={1} 
-                fill="url(#tempGradient)" 
-              />
-              <Area 
-                yAxisId="humid"
-                type="monotone" 
-                dataKey="humidity" 
-                name="Humidité Moyenne (%)" 
-                stroke="#3b82f6" 
-                strokeWidth={3}
-                fillOpacity={1} 
-                fill="url(#humidGradient)" 
-              />
-            </AreaChart>
+              {availableSensors
+                .filter(sensor => !hiddenSensors.includes(sensor))
+                .flatMap((sensorName, idx) => {
+                  const color = getSensorLineColor(sensorName, idx)
+                  return [
+                    <Line
+                      key={`${sensorName}_temp`}
+                      yAxisId="left"
+                      type="monotone"
+                      dataKey={`${sensorName}_temp`}
+                      name={`${sensorName} - Temp (°C)`}
+                      stroke={color}
+                      strokeWidth={3}
+                      dot={false}
+                      activeDot={{ r: 6 }}
+                      connectNulls
+                    />,
+                    <Line
+                      key={`${sensorName}_humid`}
+                      yAxisId="right"
+                      type="monotone"
+                      dataKey={`${sensorName}_humid`}
+                      name={`${sensorName} - Humid (%)`}
+                      stroke={color}
+                      strokeDasharray="5 5"
+                      strokeWidth={2}
+                      dot={false}
+                      activeDot={{ r: 6 }}
+                      connectNulls
+                    />
+                  ]
+                })}
+            </LineChart>
           </ResponsiveContainer>
         </div>
       </section>
@@ -319,3 +408,4 @@ function Dashboard() {
 }
 
 export default Dashboard
+

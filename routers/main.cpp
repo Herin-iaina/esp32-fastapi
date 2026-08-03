@@ -209,6 +209,13 @@ int  lcdLogIndex = 0;
 int  lcdLogStart = 0;
 unsigned long lastLogScroll = 0;
 
+// Mémorise le dernier index de cycle serveur ayant déclenché une rotation
+// stepper (Core 0 uniquement — networkTaskFunction/getStepperCommand). Voir
+// getStepperCommand() : sert à éviter de redéclencher une rotation à
+// chaque poll (~3s) tant que le serveur renvoie stepper=true pour la même
+// fenêtre de 2 minutes.
+long lastStepperCycleTriggered = -1;
+
 // ============================================================
 //  GESTION STEPPER / POWER (Core 1)
 // ============================================================
@@ -523,10 +530,30 @@ bool getStepperCommand() {
     JsonDocument doc;
     DeserializationError error = deserializeJson(doc, response);
     if (!error) {
-      if (doc["stepper"] | false) {
+      bool stepperCmd    = doc["stepper"] | false;
+      bool hasCycleField = doc["cycle"].is<long>();
+      long cycleIndex    = hasCycleField ? doc["cycle"].as<long>() : -2;
+
+      // Le serveur renvoie stepper=true pendant toute une fenêtre de 2
+      // minutes (voir get_automation_stepper côté backend). Une rotation
+      // ne prenant que quelques secondes, sans ce garde-fou l'ESP32
+      // redéclencherait une nouvelle rotation à CHAQUE poll (~3s) tant que
+      // la fenêtre reste active — soit une dizaine de rotations au lieu
+      // d'une seule. "cycle" identifie la fenêtre : on ne déclenche que si
+      // elle diffère de la dernière déjà exécutée.
+      // Repli : si le backend n'envoie pas encore "cycle" (ancienne
+      // version non mise à jour), on retombe sur l'ancien comportement
+      // (déclenche à chaque poll) plutôt que de bloquer silencieusement
+      // le stepper.
+      bool shouldTrigger = stepperCmd && (!hasCycleField || cycleIndex != lastStepperCycleTriggered);
+
+      if (shouldTrigger) {
         xSemaphoreTake(stateMutex, portMAX_DELAY);
         shared.stepperRequestPending = true;
         xSemaphoreGive(stateMutex);
+        if (hasCycleField) {
+          lastStepperCycleTriggered = cycleIndex;
+        }
         pushLCDLog("Stepper ON (srv)");
       }
       http.end();

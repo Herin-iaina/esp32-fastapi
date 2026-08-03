@@ -445,13 +445,21 @@ async def get_automation_status():
 @router.get("/automation/stepper")
 async def get_automation_stepper():
     """
-    Renvoie true/false pour la rotation du stepper.
+    Renvoie true/false pour la rotation du stepper, ainsi qu'un index de
+    cycle ("cycle") qui change à chaque nouvelle fenêtre de rotation.
     - Divise 24h par number_stepper pour obtenir l'intervalle
     - Retourne true pendant 2 minutes à chaque intervalle
     - Arrête les rotations après (timetoclose - 10) jours depuis start_date
+
+    Le champ "cycle" permet au firmware ESP32 de ne déclencher la rotation
+    qu'UNE SEULE FOIS par fenêtre de 2 minutes, au lieu de redéclencher à
+    chaque poll (~3s côté firmware) tant que "stepper" reste true — sans
+    ça, une dizaine de rotations sont lancées à chaque cycle au lieu d'une
+    seule (une rotation ne prenant que quelques secondes).
     """
     if not db_manager.connected:
-        return {"stepper": False}
+        logger.warning("automation/stepper: base de donnees non connectee")
+        return {"stepper": False, "cycle": -1}
 
     try:
         session = db_manager.SessionLocal()
@@ -459,14 +467,20 @@ async def get_automation_stepper():
         session.close()
 
         if not params:
-            return {"stepper": False}
+            logger.warning(
+                "automation/stepper: aucune ligne ParameterDataModel en base — "
+                "le stepper ne se declenchera JAMAIS tant que la configuration "
+                "(number_stepper, start_date, timetoclose) n'a pas ete creee"
+            )
+            return {"stepper": False, "cycle": -1}
 
         number_stepper = params.number_stepper or 1
         timetoclose = params.timetoclose
         start_date = params.start_date
 
         if not start_date:
-            return {"stepper": False}
+            logger.warning("automation/stepper: start_date non renseignee dans ParameterDataModel")
+            return {"stepper": False, "cycle": -1}
 
         # Assurer que start_date a un timezone
         if start_date.tzinfo is None:
@@ -478,7 +492,8 @@ async def get_automation_stepper():
         if timetoclose:
             end_rotation_date = start_date + datetime.timedelta(days=timetoclose - 10)
             if now >= end_rotation_date:
-                return {"stepper": False}
+                logger.info("automation/stepper: fenetre de rotation terminee (J-10 avant fermeture)")
+                return {"stepper": False, "cycle": -1}
 
         # Calculer l'intervalle en heures (24h / number_stepper)
         interval_hours = 24.0 / number_stepper
@@ -488,10 +503,13 @@ async def get_automation_stepper():
         elapsed = (now - start_date).total_seconds()
 
         if elapsed < 0:
-            # Pas encore commencé
-            return {"stepper": False}
+            logger.info("automation/stepper: start_date dans le futur — rotation pas encore commencee")
+            return {"stepper": False, "cycle": -1}
 
-        # Calculer où on en est dans le cycle
+        # Index de cycle : incrémente à chaque nouvel intervalle. Sert de
+        # "numéro de fenêtre" côté firmware pour dédupliquer le déclenchement.
+        cycle_index = int(elapsed // interval_seconds)
+
         # Position dans l'intervalle actuel
         position_in_interval = elapsed % interval_seconds
 
@@ -499,13 +517,13 @@ async def get_automation_stepper():
         two_minutes = 2 * 60  # 120 secondes
 
         if position_in_interval < two_minutes:
-            return {"stepper": True}
+            return {"stepper": True, "cycle": cycle_index}
         else:
-            return {"stepper": False}
+            return {"stepper": False, "cycle": cycle_index}
 
     except Exception as e:
-        logger.error(f"Erreur automation stepper: {e}")
-        return {"stepper": False}
+        logger.error(f"Erreur automation stepper: {e}", exc_info=True)
+        return {"stepper": False, "cycle": -1}
 
 # Export du routeur pour l'inclusion dans l'application principale
 __all__ = ["router"]

@@ -1,10 +1,10 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { useSensorStore } from '../store/sensorStore'
 import { 
   Filter, ArrowUpDown, ArrowUp, ArrowDown, History, Loader2, 
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, 
   CheckSquare, Square, LineChart as LineChartIcon,
-  Eye, EyeOff
+  Eye, EyeOff, ChevronDown
 } from 'lucide-react'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
@@ -46,6 +46,8 @@ function HistoryTable() {
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [hoursFilter, setHoursFilter] = useState<number>(48)
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
   
   // Tri et pagination
   const [sortField, setSortField] = useState<SortField>('timestamp')
@@ -71,6 +73,17 @@ function HistoryTable() {
       setSelectedSensors(allSensorNames)
     }
   }, [allSensorNames])
+
+  // Fermer la liste déroulante au clic à l'extérieur
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   // Calcul des moyennes globales par timestamp
   const historyWithAverages = useMemo(() => {
@@ -180,35 +193,93 @@ function HistoryTable() {
 
   // Préparation des données pour le Grand Graphique en courbe (triées par ordre chronologique ascendant)
   const chartData = useMemo(() => {
+    const bucketSize = 30 * 1000
     const cronoData = [...filteredHistory].sort(
       (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     )
 
-    // Formater et grouper par timestamp lisible
-    const mapByTime: Record<string, any> = {}
+    const mapByBucket: Record<number, any> = {}
 
     cronoData.forEach(item => {
       const dateObj = new Date(item.timestamp)
-      const formattedTime = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      const formattedDate = dateObj.toLocaleDateString([], { month: 'numeric', day: 'numeric' })
-      const label = `${formattedDate} ${formattedTime}`
+      const bucketKey = Math.floor(dateObj.getTime() / bucketSize) * bucketSize
+      const formattedTime = new Date(bucketKey).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
-      if (!mapByTime[label]) {
-        mapByTime[label] = {
-          timestamp: label,
-          rawTimestamp: item.timestamp,
-          avgTemp: item.avgTemp,
-          avgHumid: item.avgHumid
+      if (!mapByBucket[bucketKey]) {
+        mapByBucket[bucketKey] = {
+          timestamp: formattedTime,
+          rawTimestamp: bucketKey,
+          avgTempSum: 0,
+          avgHumidSum: 0,
+          avgCount: 0,
+          sensors: {} as Record<string, { sum: number; count: number }>
         }
       }
 
-      // Ajouter les propriétés spécifiques à chaque capteur coché
-      mapByTime[label][`${item.sensor}_temp`] = item.temperature
-      mapByTime[label][`${item.sensor}_humid`] = item.humidity
+      const bucket = mapByBucket[bucketKey]
+      bucket.avgTempSum += item.temperature
+      bucket.avgHumidSum += item.humidity
+      bucket.avgCount += 1
+
+      const tempKey = `${item.sensor}_temp`
+      const humidKey = `${item.sensor}_humid`
+
+      bucket.sensors[tempKey] = bucket.sensors[tempKey] || { sum: 0, count: 0 }
+      bucket.sensors[humidKey] = bucket.sensors[humidKey] || { sum: 0, count: 0 }
+
+      bucket.sensors[tempKey].sum += item.temperature
+      bucket.sensors[tempKey].count += 1
+      bucket.sensors[humidKey].sum += item.humidity
+      bucket.sensors[humidKey].count += 1
     })
 
-    return Object.values(mapByTime)
+    return Object.values(mapByBucket)
+      .sort((a, b) => a.rawTimestamp - b.rawTimestamp)
+      .map(bucket => {
+        const point: Record<string, any> = {
+          timestamp: bucket.timestamp,
+          rawTimestamp: bucket.rawTimestamp,
+          avgTemp: bucket.avgCount > 0 ? Number((bucket.avgTempSum / bucket.avgCount).toFixed(1)) : undefined,
+          avgHumid: bucket.avgCount > 0 ? Number((bucket.avgHumidSum / bucket.avgCount).toFixed(1)) : undefined
+        }
+
+        Object.entries(bucket.sensors).forEach(([key, value]) => {
+          const sensorValue = value as { sum: number; count: number }
+          point[key] = sensorValue.count > 0 ? Number((sensorValue.sum / sensorValue.count).toFixed(1)) : undefined
+        })
+
+        return point
+      })
   }, [filteredHistory])
+
+  const xAxisTicks = useMemo(() => {
+    if (!chartData.length) return []
+    const values = chartData
+      .map(item => item.rawTimestamp)
+      .filter((value): value is number => typeof value === 'number')
+      .sort((a, b) => a - b)
+
+    if (!values.length) return []
+
+    const min = values[0]
+    const max = values[values.length - 1]
+    const step = 30 * 1000
+    const ticks: number[] = []
+
+    for (let current = min; current <= max; current += step) {
+      ticks.push(current)
+    }
+
+    if (ticks[ticks.length - 1] !== max) {
+      ticks.push(max)
+    }
+
+    return ticks
+  }, [chartData])
+
+  const formatTickTime = (value: number) => {
+    return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  }
 
   const SortIcon = ({ field }: { field: SortField }) => {
     if (sortField !== field) return <ArrowUpDown size={14} className="sort-icon-inactive" />
@@ -224,44 +295,65 @@ function HistoryTable() {
         </h3>
         
         <div className="filter-controls-wrapper">
-          {/* Sélection des Capteurs (Cases à Cocher) */}
-          <div className="sensor-checkboxes-section">
-            <div className="sensor-checkboxes-header">
-              <span className="filter-label">Capteurs à afficher :</span>
-              <button className="btn-text-action" onClick={toggleAllSensors}>
-                {selectedSensors.length === allSensorNames.length ? (
-                  <><Square size={14} /> Tout décocher</>
-                ) : (
-                  <><CheckSquare size={14} /> Tout cocher</>
-                )}
-              </button>
-            </div>
-            
-            <div className="checkbox-group">
-              {allSensorNames.map((sensorName, idx) => {
-                const isChecked = selectedSensors.includes(sensorName)
-                const colors = getSensorColor(sensorName, idx)
-                return (
-                  <label key={sensorName} className={`checkbox-chip ${isChecked ? 'active' : ''}`}>
-                    <input
-                      type="checkbox"
-                      checked={isChecked}
-                      onChange={() => toggleSensorCheck(sensorName)}
-                    />
-                    <span 
-                      className="color-dot" 
-                      style={{ backgroundColor: colors.temp }} 
-                      title="Couleur Capteur" 
-                    />
-                    <span>{sensorName}</span>
-                  </label>
-                )
-              })}
-            </div>
-          </div>
-
-          {/* Filtres de Dates et Période */}
+          {/* Barre de filtres alignée sur une ligne (optimisation d'espace) */}
           <div className="filter-bar">
+            {/* Liste Déroulante Multi-Sélection des Capteurs */}
+            <div className="filter-group sensor-dropdown-group" ref={dropdownRef}>
+              <label>Capteurs à afficher</label>
+              <div className="sensor-dropdown-wrapper">
+                <button
+                  type="button"
+                  className="sensor-dropdown-trigger"
+                  onClick={() => setIsDropdownOpen(prev => !prev)}
+                >
+                  <span className="dropdown-label-text">
+                    {selectedSensors.length === 0 
+                      ? 'Aucun capteur' 
+                      : selectedSensors.length === allSensorNames.length 
+                      ? 'Tous les capteurs' 
+                      : `${selectedSensors.length} capteur(s)`}
+                  </span>
+                  <ChevronDown size={16} className={`dropdown-chevron ${isDropdownOpen ? 'open' : ''}`} />
+                </button>
+
+                {isDropdownOpen && (
+                  <div className="sensor-dropdown-menu">
+                    <div className="sensor-dropdown-actions">
+                      <button type="button" className="btn-text-action" onClick={toggleAllSensors}>
+                        {selectedSensors.length === allSensorNames.length ? (
+                          <><Square size={13} /> Tout décocher</>
+                        ) : (
+                          <><CheckSquare size={13} /> Tout cocher</>
+                        )}
+                      </button>
+                    </div>
+                    <div className="sensor-dropdown-list">
+                      {allSensorNames.map((sensorName, idx) => {
+                        const isChecked = selectedSensors.includes(sensorName)
+                        const colors = getSensorColor(sensorName, idx)
+                        return (
+                          <label key={sensorName} className={`sensor-dropdown-item ${isChecked ? 'active' : ''}`}>
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => toggleSensorCheck(sensorName)}
+                            />
+                            <span 
+                              className="color-dot" 
+                              style={{ backgroundColor: colors.temp }} 
+                              title="Couleur Capteur" 
+                            />
+                            <span>{sensorName}</span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Période */}
             <div className="filter-group">
               <label>Période</label>
               <select 
@@ -282,6 +374,7 @@ function HistoryTable() {
               </select>
             </div>
 
+            {/* Date Début */}
             <div className="filter-group">
               <label>Date Début</label>
               <input 
@@ -291,6 +384,7 @@ function HistoryTable() {
               />
             </div>
 
+            {/* Date Fin */}
             <div className="filter-group">
               <label>Date Fin</label>
               <input 
@@ -300,6 +394,7 @@ function HistoryTable() {
               />
             </div>
 
+            {/* Bouton Filtrer */}
             <button className="btn-filter" onClick={handleFilterSubmit} disabled={loading}>
               <Filter size={18} />
               Filtrer
@@ -437,7 +532,7 @@ function HistoryTable() {
           <div className="large-chart-section">
             <div className="large-chart-header">
               <h4>
-                <LineChartIcon size={20} /> Graphique d'Évolution Temporelle par Capteur
+                <LineChartIcon size={20} /> Courbe continue par capteur (points toutes les 30s)
               </h4>
 
               <div className="chart-series-toggles">
@@ -464,10 +559,15 @@ function HistoryTable() {
                 <ResponsiveContainer width="100%" height={420}>
                   <LineChart data={chartData} margin={{ top: 15, right: 30, left: 10, bottom: 25 }}>
                     <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                    <XAxis 
-                      dataKey="timestamp" 
-                      tick={{ fontSize: 11 }} 
-                      dy={10} 
+                    <XAxis
+                      dataKey="rawTimestamp"
+                      type="number"
+                      domain={["dataMin", "dataMax"]}
+                      ticks={xAxisTicks}
+                      tickFormatter={formatTickTime}
+                      tick={{ fontSize: 11 }}
+                      dy={10}
+                      interval={0}
                     />
                     <YAxis 
                       yAxisId="left" 
@@ -496,38 +596,44 @@ function HistoryTable() {
                     />
                     <Legend verticalAlign="top" height={40} />
 
-                    {/* Générer 2 séries par capteur coché (Température et Humidité) */}
-                    {selectedSensors.map((sensorName, idx) => {
+                    {/* Générer les séries Line pour chaque capteur coché sans wrapper <g> */}
+                    {selectedSensors.flatMap((sensorName, idx) => {
                       const colors = getSensorColor(sensorName, idx)
-                      return (
-                        <g key={sensorName}>
-                          {showTemp && (
-                            <Line
-                              yAxisId="left"
-                              type="monotone"
-                              dataKey={`${sensorName}_temp`}
-                              name={`${sensorName} - Temp (°C)`}
-                              stroke={colors.temp}
-                              strokeWidth={2.5}
-                              dot={false}
-                              activeDot={{ r: 6 }}
-                            />
-                          )}
-                          {showHumid && (
-                            <Line
-                              yAxisId="right"
-                              type="monotone"
-                              dataKey={`${sensorName}_humid`}
-                              name={`${sensorName} - Humidité (%)`}
-                              stroke={colors.humid}
-                              strokeDasharray="4 4"
-                              strokeWidth={2}
-                              dot={false}
-                              activeDot={{ r: 6 }}
-                            />
-                          )}
-                        </g>
-                      )
+                      const lines = []
+                      if (showTemp) {
+                        lines.push(
+                          <Line
+                            key={`${sensorName}_temp`}
+                            yAxisId="left"
+                            type="monotone"
+                            dataKey={`${sensorName}_temp`}
+                            name={`${sensorName} - Temp (°C)`}
+                            stroke={colors.temp}
+                            strokeWidth={3}
+                            dot={false}
+                            activeDot={{ r: 6 }}
+                            connectNulls
+                          />
+                        )
+                      }
+                      if (showHumid) {
+                        lines.push(
+                          <Line
+                            key={`${sensorName}_humid`}
+                            yAxisId="right"
+                            type="monotone"
+                            dataKey={`${sensorName}_humid`}
+                            name={`${sensorName} - Humidité (%)`}
+                            stroke={colors.humid}
+                            strokeDasharray="4 4"
+                            strokeWidth={3}
+                            dot={false}
+                            activeDot={{ r: 6 }}
+                            connectNulls
+                          />
+                        )
+                      }
+                      return lines
                     })}
                   </LineChart>
                 </ResponsiveContainer>
@@ -545,3 +651,4 @@ function HistoryTable() {
 }
 
 export default HistoryTable
+

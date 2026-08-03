@@ -4,7 +4,7 @@ from typing import Optional
 from datetime import datetime, timezone
 
 from core.logging import logger
-from apps.database_configuration import db_manager, ParameterDataModel, DataTempModel
+from apps.database_configuration import db_manager, ParameterDataModel, DataTempModel, StepperModel
 from core.config import settings
 
 router = APIRouter()
@@ -155,7 +155,27 @@ async def update_parameters(params: ParameterModel):
             updated_at=datetime.now(timezone.utc)
         )
         
+        # Ajouter l'enregistrement de paramètres
         session.add(param_record)
+
+        # Mettre à jour la table `stepper` pour conserver un historique des démarrages/états
+        try:
+            # StepperModel.start_date est défini comme Time dans le modèle
+            stepper_start = None
+            try:
+                stepper_start = start_date_obj.time()
+            except Exception:
+                stepper_start = None
+
+            stepper_record = StepperModel(
+                start_date=stepper_start,
+                status=bool(params.stat_stepper)
+            )
+            session.add(stepper_record)
+        except Exception as e:
+            # Ne pas bloquer la sauvegarde principale si l'insertion stepper échoue
+            logger.warning(f"Impossible d'inserer StepperModel: {e}")
+
         session.commit()
         session.close()
         
