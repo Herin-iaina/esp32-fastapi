@@ -24,7 +24,13 @@
 // loin. Ne JAMAIS garder ça sur un système en usage réel : sans BOD, un
 // sous-voltage peut corrompre la flash/l'exécution au lieu de proprement
 // redémarrer.
-// #define DEBUG_DISABLE_BOD 0
+#define DEBUG_DISABLE_BOD 0
+
+// ⚠️ MODE TEST — met à 1 pour tester le stepper (bouton) sans que la lecture
+// DHT (init + lectures répétées) n'interfère ou ne pollue les logs. Le WiFi,
+// le LCD et les LEDs restent actifs normalement. Remettre à 0 pour l'usage
+// réel de l'incubateur.
+#define TEST_MODE_SKIP_SENSORS 0
 
 // ============================================================
 //  SÉLECTION DU DRIVER STEPPER
@@ -51,8 +57,12 @@
 #define STEPPER_PIN_STEP    13
 #define STEPPER_ENABLE_PIN  32
 
-#define STEPPER_ENABLE_ACTIVE_STATE   LOW
-#define STEPPER_ENABLE_DISABLE_STATE  HIGH
+// Confirmé par test direct (sketch minimal PUL/DIR/ENA) : ce module TB6600
+// a un ENA actif HAUT (HIGH = bobines sous tension, LOW = driver coupé) —
+// inverse de la convention ENA+/ENA- standard. Ne pas réinverser sans
+// retester physiquement.
+#define STEPPER_ENABLE_ACTIVE_STATE   HIGH
+#define STEPPER_ENABLE_DISABLE_STATE  LOW
 
 #define FAN_PIN             14
 #define HUMIDIFIER_PIN      15
@@ -206,7 +216,7 @@ unsigned long lastLogScroll = 0;
 void enableStepper() {
   if (!stepperEnabled) {
     digitalWrite(STEPPER_ENABLE_PIN, STEPPER_ENABLE_ACTIVE_STATE);
-    delayMicroseconds(100);
+    delay(20); // Stabilisation du courant avant le premier pas (aligné sur le test validé)
     stepperEnabled = true;
   }
 }
@@ -830,10 +840,12 @@ void setup() {
   printLCDLine(1, "Init...");
   pushLCDLog("Initializing...");
 
+#if !TEST_MODE_SKIP_SENSORS
   dht_1.begin();
   dht_2.begin();
   dht_3.begin();
   dht_4.begin();
+#endif
 
   stepper.setMaxSpeed(STEPPER_MAX_SPEED);
   stepper.setAcceleration(STEPPER_ACCELERATION);
@@ -883,6 +895,11 @@ void loop() {
   if (now - lastSendTime >= SEND_INTERVAL) {
     lastSendTime = now;
 
+#if TEST_MODE_SKIP_SENSORS
+    // Pas de lecture DHT — juste un heartbeat pour confirmer que loop()
+    // tourne normalement pendant le test du stepper.
+    Serial.println(F("[TEST_MODE_SKIP_SENSORS] capteurs desactives — test stepper en cours"));
+#else
     SensorData sensors[4];
     sensors[0] = readSensor(dht_1, 1);
     sensors[1] = readSensor(dht_2, 2);
@@ -901,8 +918,8 @@ void loop() {
     }
     payload["average_temperature"] = avgTemperature;
     payload["average_humidity"]    = avgHumidity;
-    payload["fan_status"]          = fanOn        ? "ON" : "OFF";
-    payload["humidifier_status"]   = humidifierOn ? "ON" : "OFF";
+    payload["fan_status"]          = fanOn;
+    payload["humidifier_status"]   = humidifierOn;
     payload["numFailedSensors"]    = numFailedSensors;
 
     String jsonPayload;
@@ -920,6 +937,7 @@ void loop() {
     }
 
     printStatus(sensors, 4, avgTemperature, avgHumidity, numFailedSensors);
+#endif
   }
 
   // Tâches secondaires d'affichage et boutons
