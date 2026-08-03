@@ -327,7 +327,8 @@ void displayStatusOnLCD(float avgTemp, float avgHumid) {
 // ============================================================
 
 void buildServerUrl(const char* endpoint, char* output, size_t size) {
-  snprintf(output, size, "http://%s:%d%s", serverIP, serverPort, endpoint);
+  // Le backend FastAPI est exposé avec le préfixe /api
+  snprintf(output, size, "http://%s:%d/api%s", serverIP, serverPort, endpoint);
 }
 
 void connectWiFi() {
@@ -407,6 +408,7 @@ bool sendDataToServer(const String& jsonPayload) {
       pushLCDLog("Serveur OK");
       shared.serverFailCount = 0;
       shared.serverConnected = true;
+      shared.autonomousMode = false;
       success = true;
     } else {
       char msg[LCD_COLS + 1];
