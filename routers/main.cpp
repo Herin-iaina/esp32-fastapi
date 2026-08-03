@@ -490,7 +490,6 @@ bool getAutomationStatus() {
       shared.fanCmdFromServer     = fanCmd;
       shared.humidCmdFromServer   = humidCmd;
       shared.automationCmdPending = true;
-      shared.serverConnected      = true;
       xSemaphoreGive(stateMutex);
 
       pushLCDLog("Server OK");
@@ -500,9 +499,6 @@ bool getAutomationStatus() {
     }
     pushLCDLog("JSON statut err");
   } else {
-    xSemaphoreTake(stateMutex, portMAX_DELAY);
-    shared.serverConnected = false;
-    xSemaphoreGive(stateMutex);
     pushLCDLog("Server NOK");
   }
 
@@ -538,9 +534,6 @@ bool getStepperCommand() {
     }
     pushLCDLog("JSON stepper err");
   } else {
-    xSemaphoreTake(stateMutex, portMAX_DELAY);
-    shared.serverConnected = false;
-    xSemaphoreGive(stateMutex);
     pushLCDLog("Server NOK");
   }
 
