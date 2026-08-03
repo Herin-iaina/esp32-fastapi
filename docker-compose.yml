@@ -26,17 +26,16 @@ services:
       - incubator_network
     command: uvicorn run:app --host 0.0.0.0 --port 8000 --reload
 
-  # Frontend static (Production) - sert le build via nginx
+  # Frontend static (Production) - construit l’image avec le build frontend
   frontend:
-    image: nginx:alpine
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     container_name: esp32-frontend
     ports:
       - "5173:80"
     depends_on:
       - backend
-    volumes:
-      - ./frontend/dist:/usr/share/nginx/html:ro
-      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - incubator_network
 

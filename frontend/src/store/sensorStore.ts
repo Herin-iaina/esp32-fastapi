@@ -22,22 +22,25 @@ interface SensorStore {
   loading: boolean
   error: string | null
   isMockData: boolean
-  fetchData: (useMock?: boolean) => Promise<void>
-  fetchHistory: (hours?: number, useMock?: boolean, options?: { sensor?: string; start_date?: string; end_date?: string }) => Promise<void>
+  fetchData: (useMock?: boolean, silent?: boolean) => Promise<void>
+  fetchHistory: (hours?: number, useMock?: boolean, options?: { sensor?: string; start_date?: string; end_date?: string }, silent?: boolean) => Promise<void>
   setError: (error: string | null) => void
 }
 
 const API_BASE = '/api'
 
-export const useSensorStore = create<SensorStore>((set) => ({
+export const useSensorStore = create<SensorStore>((set, get) => ({
   data: null,
   history: [],
   loading: false,
   error: null,
   isMockData: false,
 
-  fetchData: async (useMock = false) => {
-    set({ loading: true, error: null })
+  fetchData: async (useMock = false, silent = false) => {
+    // Si silent est true et qu'on a déjà des données, ne pas positionner loading à true
+    if (!silent || !get().data) {
+      set({ loading: true, error: null })
+    }
     try {
       const mockParam = useMock ? '?mock=true' : ''
       const response = await fetch(`${API_BASE}/sensor/values${mockParam}`)
@@ -59,8 +62,10 @@ export const useSensorStore = create<SensorStore>((set) => ({
     }
   },
 
-  fetchHistory: async (hours = 24, useMock = false, options = {}) => {
-    set({ loading: true, error: null })
+  fetchHistory: async (hours = 48, useMock = false, options = {}, silent = false) => {
+    if (!silent || get().history.length === 0) {
+      set({ loading: true, error: null })
+    }
     try {
       let url = `${API_BASE}/sensor/history?hours=${hours}`
       if (useMock) url += '&mock=true'

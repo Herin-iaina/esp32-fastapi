@@ -4,6 +4,8 @@ Module de données fictives pour les tests
 Génère des données réalistes de capteurs
 """
 import datetime
+from datetime import timezone
+import math
 import random
 from models.sensor import ValuesRequest, SensorData
 
@@ -42,26 +44,37 @@ def generate_mock_sensor_data() -> ValuesRequest:
     )
 
 
-def generate_mock_sensor_history(hours: int = 24):
+def generate_mock_sensor_history(hours: int = 48):
     """
-    Génère un historique de données fictives
+    Génère un historique de données fictives multi-capteurs sur la période demandée
     """
     history = []
-    now = datetime.datetime.now()
+    now = datetime.datetime.now(timezone.utc)
+    sensors = ["sensor_01", "sensor_02", "sensor_03"]
     
-    for i in range(hours):
-        timestamp = now - datetime.timedelta(hours=hours - i)
+    # Générer des relevés par heure pour chaque capteur
+    for i in range(hours, -1, -1):
+        timestamp = (now - datetime.timedelta(hours=i)).isoformat()
         
-        # Variation sinusoïdale pour un pattern réaliste
-        base_temp = 22 + 3 * (i / hours)
-        base_humidity = 50 + 10 * (i / hours)
+        # Variation sinusoïdale de base pour la journée
+        hour_offset = (hours - i) % 24
+        daily_temp_cycle = 2.5 * math.sin((hour_offset - 8) * math.pi / 12)
+        daily_humid_cycle = -5.0 * math.sin((hour_offset - 8) * math.pi / 12)
         
-        history.append({
-            "timestamp": timestamp.isoformat(),
-            "temperature": round(base_temp + random.uniform(-1, 1), 1),
-            "humidity": round(base_humidity + random.uniform(-2, 2), 1),
-            "sensor": "sensor_01"
-        })
+        for idx, sensor_name in enumerate(sensors):
+            # Petite déviation par capteur
+            sensor_offset_temp = (idx - 1) * 0.8
+            sensor_offset_humid = (idx - 1) * -1.5
+            
+            temp = 22.5 + daily_temp_cycle + sensor_offset_temp + random.uniform(-0.5, 0.5)
+            humid = 52.0 + daily_humid_cycle + sensor_offset_humid + random.uniform(-1.2, 1.2)
+            
+            history.append({
+                "timestamp": timestamp,
+                "temperature": round(temp, 1),
+                "humidity": round(max(0.0, min(100.0, humid)), 1),
+                "sensor": sensor_name
+            })
     
     return history
 
