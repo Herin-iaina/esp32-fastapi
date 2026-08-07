@@ -42,6 +42,8 @@ function Settings() {
 
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
+  const [triggerMessage, setTriggerMessage] = useState('')
+  const [triggerLoading, setTriggerLoading] = useState(false)
   const [loading, setLoading] = useState(false)
 
   // Charger les paramètres
@@ -145,6 +147,44 @@ function Settings() {
       logger.logError('Settings', 'Erreur serveur lors de la sauvegarde', err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleTriggerStepper = async () => {
+    if (!isAuthenticated) {
+      setError('Vous devez être connecté pour actionner le moteur')
+      return
+    }
+
+    setTriggerLoading(true)
+    setTriggerMessage('')
+    setError('')
+
+    try {
+      logger.logButtonClick('Trigger moteur', 'Settings', {})
+      logger.logAPICall('POST', '/api/sensor/automation/stepper/trigger', 'pending')
+      const response = await fetch('/api/sensor/automation/stepper/trigger', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+        }
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setTriggerMessage(`Moteur déclenché (cycle ${data.cycle})`)
+        logger.logAPICall('POST', '/api/sensor/automation/stepper/trigger', 'success')
+      } else {
+        const errorData = await response.json()
+        setError(errorData.detail || 'Erreur lors du déclenchement du moteur')
+        logger.logAPICall('POST', '/api/sensor/automation/stepper/trigger', 'failed')
+      }
+    } catch (err) {
+      setError('Erreur serveur lors du déclenchement')
+      logger.logError('Settings', 'Erreur de trigger stepper', err)
+    } finally {
+      setTriggerLoading(false)
     }
   }
 
@@ -353,6 +393,17 @@ function Settings() {
               onChange={(e) => handleChange('number_stepper', parseInt(e.target.value))}
               disabled={!isAuthenticated}
             />
+          </div>
+          <div className="form-group">
+            <button
+              className="btn-trigger"
+              type="button"
+              onClick={handleTriggerStepper}
+              disabled={!isAuthenticated || triggerLoading}
+            >
+              {triggerLoading ? 'Déclenchement...' : 'Actionner le moteur'}
+            </button>
+            {triggerMessage && <p className="trigger-message">{triggerMessage}</p>}
           </div>
         </section>
 

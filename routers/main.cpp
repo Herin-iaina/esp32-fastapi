@@ -67,6 +67,10 @@
 #define FAN_PIN             14
 #define HUMIDIFIER_PIN      15
 
+// Le relais est activé par un niveau bas : GPIO LOW signifie relais enclenché.
+#define RELAY_ACTIVE_STATE   LOW
+#define RELAY_INACTIVE_STATE HIGH
+
 #define LED_GREEN_PIN       16    // Temp + humidité dans les seuils
 #define LED_ORANGE_PIN      17    // Temp ou humidité en dessous du min
 #define LED_RED_PIN         18    // Temp ou humidité au dessus du max
@@ -636,7 +640,7 @@ void applyBackupLogic(float avgTemp, float avgHumid) {
     } else if (avgTemp > TEMP_TARGET) {
       fanOn = false;
     }
-    digitalWrite(FAN_PIN, fanOn ? HIGH : LOW);
+    digitalWrite(FAN_PIN, fanOn ? RELAY_ACTIVE_STATE : RELAY_INACTIVE_STATE);
   }
 
   if (avgHumid > 0.0f) {
@@ -645,7 +649,7 @@ void applyBackupLogic(float avgTemp, float avgHumid) {
     } else if (avgHumid > HUMIDITY_TARGET) {
       humidifierOn = false;
     }
-    digitalWrite(HUMIDIFIER_PIN, humidifierOn ? HIGH : LOW);
+    digitalWrite(HUMIDIFIER_PIN, humidifierOn ? RELAY_ACTIVE_STATE : RELAY_INACTIVE_STATE);
   }
 }
 
@@ -789,8 +793,8 @@ void applyNetworkOutputs() {
   wifiConnected   = localWifiConnected;
 
   if (!autonomousMode && automationPending) {
-    digitalWrite(FAN_PIN,        fanCmd   ? HIGH : LOW);
-    digitalWrite(HUMIDIFIER_PIN, humidCmd ? HIGH : LOW);
+    digitalWrite(FAN_PIN,        fanCmd   ? RELAY_ACTIVE_STATE : RELAY_INACTIVE_STATE);
+    digitalWrite(HUMIDIFIER_PIN, humidCmd ? RELAY_ACTIVE_STATE : RELAY_INACTIVE_STATE);
     fanOn        = fanCmd;
     humidifierOn = humidCmd;
   }
@@ -873,9 +877,9 @@ void setup() {
   stepper.setAcceleration(STEPPER_ACCELERATION);
 
   pinMode(FAN_PIN,        OUTPUT);
-  digitalWrite(FAN_PIN,        LOW);
+  digitalWrite(FAN_PIN,        RELAY_INACTIVE_STATE);
   pinMode(HUMIDIFIER_PIN, OUTPUT);
-  digitalWrite(HUMIDIFIER_PIN, LOW);
+  digitalWrite(HUMIDIFIER_PIN, RELAY_INACTIVE_STATE);
 
   initLEDs();
   digitalWrite(LED_BLUE_PIN, HIGH);

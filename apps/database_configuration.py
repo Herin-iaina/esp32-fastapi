@@ -1,9 +1,11 @@
 #!/usr/bin/python3
 
 import os
+import time
 import logging
 from typing import Optional, Generator
 from contextlib import contextmanager
+from datetime import datetime, timezone
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -73,6 +75,16 @@ class DatabaseSettings(BaseSettings):
         description="Overflow du pool",
         env=["DB_MAX_OVERFLOW"],
     )
+    db_connect_retries: conint(ge=1, le=60) = Field(
+        default=10,
+        description="Nombre de tentatives de connexion à la base de données",
+        env=["DB_CONNECT_RETRIES"],
+    )
+    db_connect_interval_seconds: conint(ge=1, le=60) = Field(
+        default=3,
+        description="Intervalle entre les tentatives de connexion",
+        env=["DB_CONNECT_INTERVAL_SECONDS"],
+    )
 
     model_config = {
         "env_file": ".env",
@@ -111,6 +123,15 @@ class StepperModel(Base):
     start_date = Column(Time, nullable=True)  # Modifie ici: DateTime -> Time
     status = Column(Boolean, default=False)
     created_at = Column(TIMESTAMP, server_default='NOW()')
+
+class StepperTriggerModel(Base):
+    """Modèle pour les déclenchements manuels du stepper"""
+    __tablename__ = 'stepper_trigger'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    requested_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    processed = Column(Boolean, default=False)
+    processed_at = Column(DateTime(timezone=True), nullable=True)
 
 class ParameterDataModel(Base):
     """Modèle pour la table parameter_data"""
@@ -173,9 +194,28 @@ class DatabaseManager:
             f"@{db_settings.db_host}:{db_settings.db_port}/{db_settings.db_name}"
         )
     
+    def _wait_for_database_ready(self):
+        """Attendre que la base de données soit disponible avant de lancer la connexion."""
+        url = self._get_database_url()
+        for attempt in range(1, db_settings.db_connect_retries + 1):
+            try:
+                logger.info(f"Test de connexion à la base ({attempt}/{db_settings.db_connect_retries})...")
+                conn = psycopg2.connect(url)
+                conn.close()
+                logger.info("Base de données joignable")
+                return
+            except Exception as exc:
+                logger.warning(f"Connexion échouée ({attempt}/{db_settings.db_connect_retries}): {exc}")
+                if attempt == db_settings.db_connect_retries:
+                    raise
+                time.sleep(db_settings.db_connect_interval_seconds)
+
     def _initialize_database(self):
         """Initialiser la connexion à la base de données"""
         try:
+            # Attendre la disponibilité de la base de données si nécessaire
+            self._wait_for_database_ready()
+
             # Créer le moteur SQLAlchemy avec pool de connexions
             self.engine = create_engine(
                 self._get_database_url(),
@@ -269,7 +309,7 @@ class DatabaseManager:
     def _insert_default_data(self):
         """Insérer les données par défaut"""
         try:
-            with self.get_session() as session:
+            with self.get_session_context() as session:
                 # Vérifier si l'utilisateur admin existe
                 admin_user = session.query(LoginModel).filter_by(user_name='admin').first()
                 
@@ -278,36 +318,71 @@ class DatabaseManager:
                     admin = LoginModel(
                         mail_id='admin@example.com',
                         user_name='admin',
-                        password= self.hash_password_bcrypt("admin"),  # Mot de passe sécurisé avec bcrypt
+                        password=self.hash_password_bcrypt("admin"),  # Mot de passe sécurisé avec bcrypt
                         status=True
                     )
                     session.add(admin)
-                    session.commit()
                     logger.info("Utilisateur admin créé")
                 
         except Exception as e:
             logger.error(f"Erreur lors de l'insertion des données par défaut: {e}")
     
+    def _connect_engine(self):
+        """Créer ou recréer le moteur SQLAlchemy et la session."""
+        self.engine = create_engine(
+            self._get_database_url(),
+            pool_size=db_settings.db_pool_size,
+            max_overflow=db_settings.db_max_overflow,
+            pool_pre_ping=True,
+            echo=False
+        )
+        self.SessionLocal = sessionmaker(
+            autocommit=False,
+            autoflush=False,
+            bind=self.engine
+        )
+
     def get_session(self) -> Session:
         """Obtenir une session de base de données"""
         if not self.connected or not self.SessionLocal:
-            logger.warning("Base de données non disponible - retour None")
-            return None
+            logger.warning("Base de données non disponible - tentative de reconnexion")
+            try:
+                self._connect_engine()
+                with self.engine.connect() as conn:
+                    conn.execute(text("SELECT 1"))
+                self.connected = True
+                logger.info("Reconnexion à la base de données réussie")
+            except Exception as e:
+                logger.warning(f"Reconnexion échouée: {e}")
+                self.connected = False
+                return None
+
         return self.SessionLocal()
     
     @contextmanager
     def get_session_context(self) -> Generator[Session, None, None]:
         """Context manager pour les sessions de base de données"""
         session = self.get_session()
+        if session is None:
+            logger.error("Base de données non disponible dans get_session_context - session None")
+            raise RuntimeError("Base de données non connectée")
+
         try:
             yield session
             session.commit()
         except Exception as e:
-            session.rollback()
+            # Si une erreur survient lors des opérations, rollback et re-émettre
+            try:
+                session.rollback()
+            except Exception:
+                logger.exception("Échec lors du rollback de la session")
             logger.error(f"Erreur dans la session de base de données: {e}")
             raise
         finally:
-            session.close()
+            try:
+                session.close()
+            except Exception:
+                logger.exception("Échec lors de la fermeture de la session")
     
     def get_raw_connection(self):
         """Obtenir une connexion psycopg2 brute pour compatibilité"""
@@ -334,7 +409,7 @@ class DatabaseManager:
         """Vérifier la santé de la base de données"""
         try:
             with self.get_session_context() as session:
-                session.execute("SELECT 1")
+                session.execute(text("SELECT 1"))
                 return True
         except Exception as e:
             logger.error(f"Health check failed: {e}")

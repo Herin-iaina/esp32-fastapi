@@ -1,16 +1,17 @@
 import json
 import datetime
 from datetime import timezone
-from typing import Dict, Any
+from typing import Annotated, Dict, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status, Query
 from pydantic import BaseModel, ValidationError
 
 from core.config import settings
 from core.logging import logger
+from core.security import current_subject
 from models.sensor import ValuesRequest, process_sensor_data
 from core.mock_data import generate_mock_sensor_data, generate_mock_sensor_history
-from apps.database_configuration import db_manager, DataTempModel, ParameterDataModel
+from apps.database_configuration import db_manager, DataTempModel, ParameterDataModel, StepperTriggerModel
 
 # Configuration du routeur
 router = APIRouter(prefix="/sensor", tags=["Capteurs"])
@@ -432,10 +433,14 @@ async def get_automation_status():
         if not params:
             return {"humidifier": False, "fan": False}
 
+        target_temp  = params.temp_incubation if params.temp_incubation is not None else params.temperature
+        target_humid = params.humidity_target if params.humidity_target is not None else params.humidity
+        print(f"Automation status: avg_temp={avg_temp}, target_temp={target_temp}, avg_humid={avg_humid}, target_humid={target_humid}")
+
         # true si moyenne < seuil
         return {
-            "humidifier": avg_humid < params.humidity,
-            "fan": avg_temp < params.temperature
+            "humidifier": avg_humid < target_humid,
+            "fan": avg_temp < target_temp
         }
     except Exception as e:
         logger.error(f"Erreur automation status: {e}")
@@ -461,10 +466,22 @@ async def get_automation_stepper():
         logger.warning("automation/stepper: base de donnees non connectee")
         return {"stepper": False, "cycle": -1}
 
+    session = None
     try:
         session = db_manager.SessionLocal()
+        trigger = session.query(StepperTriggerModel).filter_by(processed=False).order_by(StepperTriggerModel.requested_at.desc()).first()
         params = session.query(ParameterDataModel).order_by(ParameterDataModel.id.desc()).first()
-        session.close()
+        now = datetime.datetime.now(timezone.utc)
+
+        # Si un trigger manuel est présent et récent, le retourner en priorité
+        if trigger:
+            elapsed_trigger = (now - trigger.requested_at).total_seconds()
+            if elapsed_trigger < 120:
+                manual_cycle = 1000000 + trigger.id
+                return {"stepper": True, "cycle": manual_cycle}
+            trigger.processed = True
+            trigger.processed_at = now
+            session.commit()
 
         if not params:
             logger.warning(
@@ -485,8 +502,6 @@ async def get_automation_stepper():
         # Assurer que start_date a un timezone
         if start_date.tzinfo is None:
             start_date = start_date.replace(tzinfo=timezone.utc)
-
-        now = datetime.datetime.now(timezone.utc)
 
         # Vérifier si on est après (timetoclose - 10) jours - pas de rotation
         if timetoclose:
@@ -524,6 +539,47 @@ async def get_automation_stepper():
     except Exception as e:
         logger.error(f"Erreur automation stepper: {e}", exc_info=True)
         return {"stepper": False, "cycle": -1}
+    finally:
+        if session is not None:
+            session.close()
+
+class TriggerResponse(BaseModel):
+    message: str
+    cycle: int
+    triggered_at: str
+
+@router.post("/automation/stepper/trigger", response_model=TriggerResponse)
+async def post_automation_stepper_trigger(subject: Annotated[str, Depends(current_subject)]):
+    """Déclenche manuellement une rotation du moteur stepper."""
+    if not db_manager.connected:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Base de données non connectée"
+        )
+
+    try:
+        session = db_manager.SessionLocal()
+        trigger = StepperTriggerModel(
+            requested_at=datetime.datetime.now(timezone.utc),
+            processed=False
+        )
+        session.add(trigger)
+        session.commit()
+        session.refresh(trigger)
+        session.close()
+
+        logger.info(f"Manual stepper trigger created: id={trigger.id}")
+        return TriggerResponse(
+            message="Rotation moteur demandée",
+            cycle=trigger.id,
+            triggered_at=trigger.requested_at.isoformat()
+        )
+    except Exception as e:
+        logger.error(f"Erreur création du trigger stepper: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Impossible de déclencher le moteur"
+        )
 
 # Export du routeur pour l'inclusion dans l'application principale
 __all__ = ["router"]
