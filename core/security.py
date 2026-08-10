@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from typing import Annotated
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from core.config import settings
 
 ALGORITHM = "HS256"
@@ -32,11 +32,18 @@ def create_access_token(subject: str, expires_minutes: int | None = None) -> str
 
 def decode_token(token: str) -> TokenPayload:
     try:
-        decoded = jwt.decode(token, settings.secret_key.get_secret_value(), algorithms=[ALGORITHM])
+        decoded = jwt.decode(
+            token,
+            settings.secret_key.get_secret_value(),
+            algorithms=[ALGORITHM],
+            audience="api-users",  # doit correspondre au "aud" pose dans create_access_token
+        )
         return TokenPayload(**decoded)
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.InvalidTokenError:
+    except (jwt.JWTError, ValidationError):
+        # jwt.JWTError est la classe de base de toutes les erreurs jose
+        # (signature invalide, audience invalide, token malforme, claim manquant...)
         raise HTTPException(status_code=401, detail="Invalid token")
 
 def refresh_access_token(current_token: str) -> str:

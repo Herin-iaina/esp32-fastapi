@@ -4,8 +4,10 @@ from typing import Optional
 from datetime import datetime, timezone
 
 from core.logging import logger
+from core.security import current_subject
 from apps.database_configuration import db_manager, ParameterDataModel, DataTempModel, StepperModel
 from core.config import settings
+from typing import Annotated
 
 router = APIRouter()
 
@@ -121,8 +123,8 @@ async def read_parameters():
 
 
 @router.post("/parameter", response_model=dict)
-async def update_parameters(params: ParameterModel):
-    """Sauvegarde les paramètres dans la base de données"""
+async def update_parameters(params: ParameterModel, subject: Annotated[str, Depends(current_subject)]):
+    """Sauvegarde les paramètres dans la base de données (authentification requise)"""
     try:
         if not db_manager.connected:
             raise HTTPException(
@@ -225,4 +227,3 @@ async def get_parameters_history(limit: int = 10):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erreur serveur"
         )
-

@@ -473,15 +473,30 @@ async def get_automation_stepper():
         params = session.query(ParameterDataModel).order_by(ParameterDataModel.id.desc()).first()
         now = datetime.datetime.now(timezone.utc)
 
+        # --- TRACE DIAGNOSTIC (a retirer apres debug) ---
+        logger.info(
+            f"[TRACE stepper-poll] appel a {now.isoformat()} | "
+            f"trigger_non_traite={'id=' + str(trigger.id) if trigger else 'aucun'}"
+        )
+        # --------------------------------------------------
+
         # Si un trigger manuel est présent et récent, le retourner en priorité
         if trigger:
             elapsed_trigger = (now - trigger.requested_at).total_seconds()
+            # --- TRACE DIAGNOSTIC (a retirer apres debug) ---
+            logger.info(
+                f"[TRACE stepper-poll] trigger id={trigger.id} requested_at={trigger.requested_at.isoformat()} "
+                f"elapsed={elapsed_trigger:.1f}s (fenetre active si < 120s)"
+            )
+            # --------------------------------------------------
             if elapsed_trigger < 120:
                 manual_cycle = 1000000 + trigger.id
+                logger.info(f"[TRACE stepper-poll] -> reponse: stepper=True cycle={manual_cycle}")
                 return {"stepper": True, "cycle": manual_cycle}
             trigger.processed = True
             trigger.processed_at = now
             session.commit()
+            logger.info(f"[TRACE stepper-poll] trigger id={trigger.id} marque processed=True (fenetre expiree)")
 
         if not params:
             logger.warning(
@@ -569,6 +584,12 @@ async def post_automation_stepper_trigger(subject: Annotated[str, Depends(curren
         session.close()
 
         logger.info(f"Manual stepper trigger created: id={trigger.id}")
+        # --- TRACE DIAGNOSTIC (a retirer apres debug) ---
+        logger.info(
+            f"[TRACE stepper-trigger] bouton presse a {trigger.requested_at.isoformat()} "
+            f"-> id={trigger.id} enregistre en base (processed=False)"
+        )
+        # --------------------------------------------------
         return TriggerResponse(
             message="Rotation moteur demandée",
             cycle=trigger.id,
