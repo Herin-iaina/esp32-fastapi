@@ -3,6 +3,8 @@
 #include <ArduinoJson.h>
 #include <AccelStepper.h>
 #include <LiquidCrystal_I2C.h>
+#include <Wire.h>
+#include <PCF8574.h>  // Bibliotheque "PCF8574" (Renzo Mischianti) - via Library Manager
 #include "DHT.h"
 
 #include "freertos/FreeRTOS.h"
@@ -71,13 +73,28 @@
 #define RELAY_ACTIVE_STATE   LOW
 #define RELAY_INACTIVE_STATE HIGH
 
-#define LED_GREEN_PIN       16    // Temp + humidité dans les seuils
-#define LED_ORANGE_PIN      17    // Temp ou humidité en dessous du min
-#define LED_RED_PIN         18    // Temp ou humidité au dessus du max
-#define LED_BLUE_PIN        19    // Serveur inaccessible / mode autonome
+// ============================================================
+//  EXPANDER I2C PCF8574 — LEDs + BOUTONS
+// ============================================================
+// LEDs (3V) et boutons deportes sur un expander PCF8574T pour liberer les
+// GPIO ESP32 (16, 17, 18, 19, 23, 27 sont maintenant libres pour un autre
+// usage). Bus I2C partage avec le LCD (adresse distincte impérative).
+#define I2C_SDA              21
+#define I2C_SCL              22
+#define PCF8574_ADDRESS      0x20   // Reglable 0x20-0x27 via A0-A2 si conflit
 
-#define BUTTON_STEPPER_PIN      23
-#define BUTTON_LCD_SCROLL_PIN   27
+// LEDs montees en actif-BAS (LED + résistance série entre +5V et la pin) :
+// pin a 0 = LED allumee (le PCF8574 "sink" le courant), pin a 1 = eteinte.
+#define LED_GREEN_PIN       0    // Temp + humidité dans les seuils
+#define LED_ORANGE_PIN      1    // Temp ou humidité en dessous du min
+#define LED_RED_PIN         2    // Temp ou humidité au dessus du max
+#define LED_BLUE_PIN        3    // Serveur inaccessible / mode autonome
+#define LED_ACTIVE_STATE    LOW
+#define LED_INACTIVE_STATE  HIGH
+
+// Boutons cables entre la pin et GND, pull-up interne faible du PCF8574
+#define BUTTON_STEPPER_PIN      4
+#define BUTTON_LCD_SCROLL_PIN   5
 
 #define LCD_ADDRESS         0x27
 #define LCD_COLS            16
@@ -154,6 +171,7 @@ DHT dht_4(DHT_4_PIN_DATA, DHT_SENSOR_TYPE);
 
 AccelStepper stepper(AccelStepper::DRIVER, STEPPER_PIN_STEP, STEPPER_PIN_DIR);
 LiquidCrystal_I2C lcd(LCD_ADDRESS, LCD_COLS, LCD_ROWS);
+PCF8574 pcf8574(PCF8574_ADDRESS);
 
 // ============================================================
 //  STRUCTURES DE DONNÉES & VARIABLES GLOBALES
@@ -205,6 +223,22 @@ bool stepperBtnPendingCheck         = false;
 bool lcdBtnPendingCheck             = false;
 unsigned long stepperBtnTriggerTime = 0;
 unsigned long lcdBtnTriggerTime     = 0;
+
+// FIX SECURITE : etat de presence reelle du PCF8574 sur le bus I2C.
+// Tant que ce flag est false, on IGNORE toute lecture de bouton et
+// tout pilotage LED via le PCF8574 : un module debranche ne doit
+// jamais pouvoir simuler un appui bouton et lancer le moteur.
+bool pcf8574Connected             = false;
+unsigned long lastPcf8574CheckTime = 0;
+const unsigned long PCF8574_CHECK_INTERVAL = 1000; // ms — sonde la presence reguliement
+
+// Sonde legere et fiable : ACK I2C direct sur l'adresse du PCF8574.
+// Independant de la logique interne de la bibliotheque, donc marche
+// meme si le module a ete debranche apres le demarrage.
+bool probePCF8574Presence() {
+  Wire.beginTransmission(PCF8574_ADDRESS);
+  return (Wire.endTransmission() == 0);
+}
 
 // LCD log ring buffer
 char lcdLogBuffer[LCD_LOG_BUFFER_SIZE][LCD_COLS + 1];
@@ -686,28 +720,33 @@ void calculateAverages(SensorData sensors[], int count, float& avgTemp, float& a
 }
 
 void initLEDs() {
-  const int pins[] = { LED_GREEN_PIN, LED_ORANGE_PIN, LED_RED_PIN, LED_BLUE_PIN };
-  for (int p : pins) {
-    pinMode(p, OUTPUT);
-    digitalWrite(p, LOW);
+  const uint8_t pins[] = { LED_GREEN_PIN, LED_ORANGE_PIN, LED_RED_PIN, LED_BLUE_PIN };
+  for (uint8_t p : pins) {
+    pcf8574.pinMode(p, OUTPUT);
+    pcf8574.digitalWrite(p, LED_INACTIVE_STATE);
   }
 }
 
 void setAllLEDsOff() {
-  digitalWrite(LED_GREEN_PIN,  LOW);
-  digitalWrite(LED_ORANGE_PIN, LOW);
-  digitalWrite(LED_RED_PIN,    LOW);
-  digitalWrite(LED_BLUE_PIN,   LOW);
+  if (!pcf8574Connected) return;
+  pcf8574.digitalWrite(LED_GREEN_PIN,  LED_INACTIVE_STATE);
+  pcf8574.digitalWrite(LED_ORANGE_PIN, LED_INACTIVE_STATE);
+  pcf8574.digitalWrite(LED_RED_PIN,    LED_INACTIVE_STATE);
+  pcf8574.digitalWrite(LED_BLUE_PIN,   LED_INACTIVE_STATE);
 }
 
 void updateStatusLEDs(float avgTemp, float avgHumid, bool serverOk) {
+  // SECURITE : pas de PCF8574 => pas de tentative d'ecriture I2C inutile
+  // (evite de bloquer sur des transactions qui vont echouer a chaque tour).
+  if (!pcf8574Connected) return;
+
   setAllLEDsOff();
 
   if (!serverOk || autonomousMode) {
-    digitalWrite(LED_BLUE_PIN, HIGH);
+    pcf8574.digitalWrite(LED_BLUE_PIN, LED_ACTIVE_STATE);
   }
   if (avgTemp <= 0.0f || avgHumid <= 0.0f) {
-    digitalWrite(LED_RED_PIN, HIGH);
+    pcf8574.digitalWrite(LED_RED_PIN, LED_ACTIVE_STATE);
     return;
   }
 
@@ -715,29 +754,34 @@ void updateStatusLEDs(float avgTemp, float avgHumid, bool serverOk) {
   bool humidOk = avgHumid >= HUMIDITY_MIN && avgHumid <= HUMIDITY_MAX;
 
   if (tempOk && humidOk) {
-    digitalWrite(LED_GREEN_PIN, HIGH);
+    pcf8574.digitalWrite(LED_GREEN_PIN, LED_ACTIVE_STATE);
   } else if (avgTemp > TEMP_MAX || avgHumid > HUMIDITY_MAX) {
-    digitalWrite(LED_RED_PIN, HIGH);
+    pcf8574.digitalWrite(LED_RED_PIN, LED_ACTIVE_STATE);
   } else {
-    digitalWrite(LED_ORANGE_PIN, HIGH);
+    pcf8574.digitalWrite(LED_ORANGE_PIN, LED_ACTIVE_STATE);
   }
 }
 
 // FIX 3 : Debounce 100% NON-BLOQUANT pour éliminer les micro-saccades moteur
 void checkStepperButton() {
+  // SECURITE : PCF8574 absent/debranche => on n'ecoute pas ce "bouton
+  // fantome". Sans ce garde, une lecture I2C echouee peut etre
+  // interpretee comme un appui permanent et declencher le moteur seul.
+  if (!pcf8574Connected) return;
+
   const unsigned long DEBOUNCE = 200;
   const unsigned long CONFIRM_TIME = 20;
   unsigned long now = millis();
 
   if (!stepperBtnPendingCheck) {
-    if (digitalRead(BUTTON_STEPPER_PIN) == LOW && (now - lastButtonPress > DEBOUNCE)) {
+    if (pcf8574.digitalRead(BUTTON_STEPPER_PIN) == LOW && (now - lastButtonPress > DEBOUNCE)) {
       stepperBtnPendingCheck = true;
       stepperBtnTriggerTime = now;
     }
   } else {
     if (now - stepperBtnTriggerTime >= CONFIRM_TIME) {
       stepperBtnPendingCheck = false;
-      if (digitalRead(BUTTON_STEPPER_PIN) == LOW) {
+      if (pcf8574.digitalRead(BUTTON_STEPPER_PIN) == LOW) {
         lastButtonPress = now;
         pushLCDLog("Stepper manuel");
         startStepperRotation("bouton");
@@ -747,19 +791,22 @@ void checkStepperButton() {
 }
 
 void checkLCDScrollButton() {
+  // Meme securite que checkStepperButton() : pas de PCF8574, pas de lecture.
+  if (!pcf8574Connected) return;
+
   const unsigned long DEBOUNCE = 200;
   const unsigned long CONFIRM_TIME = 20;
   unsigned long now = millis();
 
   if (!lcdBtnPendingCheck) {
-    if (digitalRead(BUTTON_LCD_SCROLL_PIN) == LOW && (now - lastScrollButtonPress > DEBOUNCE)) {
+    if (pcf8574.digitalRead(BUTTON_LCD_SCROLL_PIN) == LOW && (now - lastScrollButtonPress > DEBOUNCE)) {
       lcdBtnPendingCheck = true;
       lcdBtnTriggerTime = now;
     }
   } else {
     if (now - lcdBtnTriggerTime >= CONFIRM_TIME) {
       lcdBtnPendingCheck = false;
-      if (digitalRead(BUTTON_LCD_SCROLL_PIN) == LOW) {
+      if (pcf8574.digitalRead(BUTTON_LCD_SCROLL_PIN) == LOW) {
         lastScrollButtonPress = now;
         advanceLCDLog();
       }
@@ -860,6 +907,17 @@ void setup() {
   pinMode(STEPPER_ENABLE_PIN, OUTPUT);
   disableStepper();
 
+  // Bus I2C partage : LCD + PCF8574 (LEDs/boutons). A initialiser avant tout
+  // accès à l'un ou l'autre.
+  Wire.begin(I2C_SDA, I2C_SCL);
+  if (!pcf8574.begin()) {
+    Serial.println(F("ATTENTION: PCF8574 (LEDs/boutons) non detecte!"));
+  }
+  pcf8574Connected = probePCF8574Presence();
+  if (!pcf8574Connected) {
+    Serial.println(F("ATTENTION: PCF8574 absent du bus I2C — boutons/LEDs desactives par securite."));
+  }
+
   lcd.init();
   lcd.backlight();
   printLCDLine(0, "ESP32 Sensor v4");
@@ -881,11 +939,16 @@ void setup() {
   pinMode(HUMIDIFIER_PIN, OUTPUT);
   digitalWrite(HUMIDIFIER_PIN, RELAY_INACTIVE_STATE);
 
-  initLEDs();
-  digitalWrite(LED_BLUE_PIN, HIGH);
+  if (pcf8574Connected) {
+    initLEDs();
+    pcf8574.digitalWrite(LED_BLUE_PIN, LED_ACTIVE_STATE);
 
-  pinMode(BUTTON_STEPPER_PIN,    INPUT_PULLUP);
-  pinMode(BUTTON_LCD_SCROLL_PIN, INPUT_PULLUP);
+    // Boutons sur PCF8574 : mode INPUT active la pull-up faible interne
+    // (quasi-bidirectionnel), pas besoin de pull-up externe dans la plupart
+    // des cas.
+    pcf8574.pinMode(BUTTON_STEPPER_PIN,    INPUT);
+    pcf8574.pinMode(BUTTON_LCD_SCROLL_PIN, INPUT);
+  }
 
   xTaskCreatePinnedToCore(
     networkTaskFunction,
@@ -964,6 +1027,24 @@ void loop() {
 
     printStatus(sensors, 4, avgTemperature, avgHumidity, numFailedSensors);
 #endif
+  }
+
+  // SECURITE : re-sonde la presence du PCF8574 regulierement. Si le
+  // module est debranche en cours de route, pcf8574Connected repasse a
+  // false et coupe immediatement la lecture des boutons/LEDs — un fil
+  // arrache ne doit jamais pouvoir faire tourner le moteur tout seul.
+  if (now - lastPcf8574CheckTime >= PCF8574_CHECK_INTERVAL) {
+    lastPcf8574CheckTime = now;
+    bool wasConnected = pcf8574Connected;
+    pcf8574Connected = probePCF8574Presence();
+    if (wasConnected && !pcf8574Connected) {
+      Serial.println(F("ATTENTION: PCF8574 deconnecte du bus I2C — boutons/LEDs desactives."));
+    } else if (!wasConnected && pcf8574Connected) {
+      Serial.println(F("PCF8574 reconnecte — reinitialisation LEDs/boutons."));
+      initLEDs();
+      pcf8574.pinMode(BUTTON_STEPPER_PIN,    INPUT);
+      pcf8574.pinMode(BUTTON_LCD_SCROLL_PIN, INPUT);
+    }
   }
 
   // Tâches secondaires d'affichage et boutons
