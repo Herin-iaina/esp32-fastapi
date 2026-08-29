@@ -5,18 +5,33 @@
 #include <LiquidCrystal_I2C.h>
 #include <Wire.h>
 #include <PCF8574.h>  // Bibliotheque "PCF8574" (Renzo Mischianti) - via Library Manager
-#include "Adafruit_SHT4x.h"
+#include "DHT.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include <esp_task_wdt.h>
+#include "soc/rtc_cntl_reg.h"
+#include "soc/soc.h"
 
 // ============================================================
-//  ⚠️ MODE TEST — met à 1 pour tester le stepper (bouton) sans que la
-//  lecture SHT45 n'interfère ou ne pollue les logs. Remettre à 0 pour
-//  l'usage réel de l'incubateur.
+//  ⚠️ DIAGNOSTIC UNIQUEMENT — À RETIRER APRÈS TEST ⚠️
 // ============================================================
+// Désactive le détecteur de brownout matériel. Ça ne corrige RIEN — ça
+// masque juste le symptôme (le reset), pour vérifier si le blocage vient
+// bien d'un sous-voltage transitoire. Si avec ça le boot va au bout et que
+// tu observes à la place des comportements bizarres (WiFi qui échoue,
+// capteurs qui donnent n'importe quoi, redémarrages aléatoires ailleurs),
+// ça confirme un vrai problème d'alimentation à régler avant d'aller plus
+// loin. Ne JAMAIS garder ça sur un système en usage réel : sans BOD, un
+// sous-voltage peut corrompre la flash/l'exécution au lieu de proprement
+// redémarrer.
+#define DEBUG_DISABLE_BOD 0
+
+// ⚠️ MODE TEST — met à 1 pour tester le stepper (bouton) sans que la lecture
+// DHT (init + lectures répétées) n'interfère ou ne pollue les logs. Le WiFi,
+// le LCD et les LEDs restent actifs normalement. Remettre à 0 pour l'usage
+// réel de l'incubateur.
 #define TEST_MODE_SKIP_SENSORS 0
 
 // ============================================================
@@ -29,26 +44,43 @@
 // ============================================================
 //  DÉFINITION DES PINS
 // ============================================================
+#define DHT_SENSOR_TYPE     DHT22
+#define DHT_1_PIN_DATA      33
+// GPIO 34/35/36 sont des broches ENTRÉE SEULE sur l'ESP32 (pas de driver de
+// sortie physique) : le protocole DHT a besoin d'envoyer un signal de
+// démarrage (ligne tirée au bas) avant de lire la réponse, donc ces
+// broches ne peuvent PAS fonctionner avec un DHT, pull-up externe ou pas.
+// Rebranche physiquement les capteurs 2/3/4 sur ces broches à la place :
+#define DHT_2_PIN_DATA      25
+#define DHT_3_PIN_DATA      26
+#define DHT_4_PIN_DATA      4
+
 #define STEPPER_PIN_DIR     12
 #define STEPPER_PIN_STEP    13
 #define STEPPER_ENABLE_PIN  32
 
-// Reprend la valeur confirmée par test direct sur main.cpp : ce module
-// TB6600 a un ENA actif HAUT (HIGH = bobines sous tension, LOW = driver
-// coupé) — inverse de la convention ENA+/ENA- standard. Ne pas réinverser
-// sans retester physiquement.
+// Confirmé par test direct (sketch minimal PUL/DIR/ENA) : ce module TB6600
+// a un ENA actif HAUT (HIGH = bobines sous tension, LOW = driver coupé) —
+// inverse de la convention ENA+/ENA- standard. Ne pas réinverser sans
+// retester physiquement.
 #define STEPPER_ENABLE_ACTIVE_STATE   HIGH
 #define STEPPER_ENABLE_DISABLE_STATE  LOW
 
 #define FAN_PIN             14
 #define HUMIDIFIER_PIN      15
 
+// Le relais est activé par un niveau bas : GPIO LOW signifie relais enclenché.
+#define RELAY_ACTIVE_STATE   LOW
+#define RELAY_INACTIVE_STATE HIGH
+
 // ============================================================
 //  EXPANDER I2C PCF8574 — LEDs + BOUTONS
 // ============================================================
-// LEDs (3V) et boutons deportes sur un PCF8574T, sur le bus principal, comme
-// le LCD (PAS derrière le TCA9548A — seuls les SHT45 partagent son adresse
-// fixe 0x44 et ont besoin du mux). Libere les GPIO ESP32 16,17,18,19,23,27.
+// LEDs (3V) et boutons deportes sur un expander PCF8574T pour liberer les
+// GPIO ESP32 (16, 17, 18, 19, 23, 27 sont maintenant libres pour un autre
+// usage). Bus I2C partage avec le LCD (adresse distincte impérative).
+#define I2C_SDA              21
+#define I2C_SCL              22
 #define PCF8574_ADDRESS      0x20   // Reglable 0x20-0x27 via A0-A2 si conflit
 
 // LEDs montees en actif-BAS (LED + résistance série entre +5V et la pin) :
@@ -61,45 +93,27 @@
 #define LED_INACTIVE_STATE  HIGH
 
 // Boutons cables entre la pin et GND, pull-up interne faible du PCF8574
-#define BUTTON_STEPPER_PIN      4
+#define BUTTON_STEPPER_PIN      4      // (reserve / inutilise, bouton deplace sur GPIO ESP32)
 #define BUTTON_LCD_SCROLL_PIN   5
 
-// I2C (bus principal ESP32)
-#define I2C_SDA         21
-#define I2C_SCL         22
+// Bouton moteur reaffecte directement sur un GPIO ESP32 (LEDs PCF8574
+// laissees telles quelles, hors service). Pull-down externe 10k vers GND :
+// pin LOW au repos, HIGH quand le bouton est appuye (relie au 3.3V).
+#define BUTTON_STEPPER_ESP_PIN  27
 
-// LCD I2C — branché directement sur le bus principal, PAS derrière le
-// multiplexeur (seuls les capteurs SHT45 passent par le TCA9548A car ils
-// partagent tous la même adresse fixe 0x44).
-#define LCD_ADDRESS     0x27
-#define LCD_COLS        16
-#define LCD_ROWS        2
-
-// ============================================================
-//  MULTIPLEXEUR I2C TCA9548A + CAPTEURS SHT45
-// ============================================================
-// Le SHT45 (comme tout SHT4x) n'a pas de broche d'adresse alternative :
-// son adresse I2C est fixée à 0x44. Pour en mettre plusieurs sur le même
-// bus, il faut donc passer par un multiplexeur — le TCA9548A expose 8
-// canaux (0-7), chacun isolant électriquement un sous-bus dédié.
-#define TCA9548A_ADDRESS    0x70
-#define SHT45_I2C_ADDRESS   0x44
-
-#define NUM_SENSORS 4
-// Canal du multiplexeur associé à chaque capteur SHT45. Pour ajouter un
-// capteur, brancher son SDA/SCL sur un canal libre du TCA9548A (0-7) et
-// ajouter l'entrée correspondante ici + incrémenter NUM_SENSORS.
-const uint8_t SENSOR_MUX_CHANNEL[NUM_SENSORS] = { 0, 1, 2, 3 };
+#define LCD_ADDRESS         0x27
+#define LCD_COLS            16
+#define LCD_ROWS            2
 
 // ============================================================
 //  WIFI & SERVEUR
 // ============================================================
-const char* ssid       = "Airbox-4D56";
-const char* password   = "16017581";
-const char* serverIP   = "192.168.1.100";
-const int   serverPort = 5000;
+const char* ssid       = "Airbox-AB84";
+const char* password   = "7ddd6jVJPUR-deEJbxc";
+const char* serverIP   = "192.168.1.155";
+const int   serverPort = 8000;
 const char* apiKey     = "Votre_Cle_API";
-const char* HOSTNAME   = "ESP32-Sensor-SHT45";
+const char* HOSTNAME   = "ESP32-Sensor";
 
 // ============================================================
 //  SEUILS TEMPÉRATURE / HUMIDITÉ & HYSTÉRÉSIS
@@ -118,42 +132,6 @@ const float TEMP_HYSTERESIS     = 0.3f;
 const float HUMIDITY_HYSTERESIS = 0.5f;
 
 // ============================================================
-//  SÉCURITÉ CAPTEUR — ANTI-CONDENSATION (chauffage interne SHT45)
-// ============================================================
-// Valeurs par défaut — ajustables à distance sans reflasher via l'endpoint
-// serveur /sensor/automation/config (voir getAutomationConfig()). Ce sont
-// des variables (pas des const) précisément pour ça ; ne pas les modifier
-// directement en dehors de applyServerConfig(), qui passe par le mutex.
-float         humidityHeaterThreshold = 90.0f;
-float         humidityResetThreshold  = 85.0f;  // Seuil bas de réarmement (hystérésis) — cf. note ci-dessous
-unsigned long humidityHighSustainMs   = 5UL * 60UL * 1000UL;  // 5 minutes par défaut
-unsigned long sensorCooldownMs        = 3UL * 60UL * 1000UL;  // pause avant reprise des lectures — à ajuster selon retour terrain
-// Note hystérésis : sans humidityResetThreshold < humidityHeaterThreshold,
-// un bruit de mesure faisant osciller RH autour de 90% (89.8% -> 90.2% ->
-// 89.9%...) réinitialiserait humidityHighSince à chaque petite chute,
-// alors que l'humidité est en pratique restée élevée en continu.
-
-// Réglage du chauffage : haute puissance, impulsion courte (1s). Voir
-// Adafruit_SHT4x.h pour les autres options (MED/LOW, 1S/100MS).
-#define SHT45_HEATER_SETTING  SHT4X_HIGH_HEATER_1S
-// Si, après ce nombre de cycles chauffage+pause consécutifs, RH est
-// toujours au-dessus du seuil, ce n'est probablement plus un problème de
-// condensation ponctuelle sur le capteur mais un vrai souci d'humidité
-// ambiante (ventilation, étanchéité...). On arrête de rechauffer en
-// boucle et on signale une alerte au lieu de continuer indéfiniment.
-const int HEATER_MAX_CONSECUTIVE_TRIGGERS = 3;
-
-// ============================================================
-//  DIAGNOSTIC I2C (optionnel — désactivé par défaut)
-// ============================================================
-// Passe à 1 pour lancer un scan complet du bus principal + de chaque canal
-// du TCA9548A au démarrage (utile une seule fois, avant le premier essai
-// réel, pour confirmer le câblage sans avoir à écrire un sketch séparé).
-// Remettre à 0 ensuite : le scan ajoute ~1-2s au boot et n'apporte rien en
-// usage normal.
-#define DEBUG_I2C_SCAN 0
-
-// ============================================================
 //  TIMING & BUFFERS
 // ============================================================
 const unsigned long SEND_INTERVAL             = 5000UL;   // ms entre chaque cycle capteurs
@@ -161,13 +139,13 @@ const unsigned long LCD_SCROLL_INTERVAL       = 3000UL;   // ms entre chaque dé
 const unsigned long RECONNECT_INTERVAL        = 60000UL;  // ms entre tentatives de reconnexion serveur
 const unsigned long WIFI_TIMEOUT              = 15000UL;  // ms max pour connexion WiFi
 const unsigned long AUTOMATION_POLL_INTERVAL  = 3000UL;   // ms entre chaque poll automation/stepper
-const unsigned long CONFIG_POLL_INTERVAL      = 300000UL; // ms entre chaque poll de config (5 min) — ces seuils changent rarement
 const unsigned long HTTP_TIMEOUT              = 1500UL;   // ms timeout par requête HTTP
 
 const int LCD_LOG_BUFFER_SIZE = 6;
 const int MAX_SERVER_RETRIES  = 10;
 
-const uint32_t WDT_TIMEOUT_SEC = 25;   // > WIFI_TIMEOUT (15s) pour marge de sécurité
+// FIX 1 : WDT à 25s (> WIFI_TIMEOUT de 15s) pour marge de sécurité
+const uint32_t WDT_TIMEOUT_SEC = 25;                       
 
 // ============================================================
 //  CONFIGURATION STEPPER
@@ -191,8 +169,10 @@ const uint32_t WDT_TIMEOUT_SEC = 25;   // > WIFI_TIMEOUT (15s) pour marge de sé
 // ============================================================
 //  OBJETS GLOBAUX
 // ============================================================
-Adafruit_SHT4x sht45Sensors[NUM_SENSORS];
-bool sensorAvailable[NUM_SENSORS] = { false, false, false, false };
+DHT dht_1(DHT_1_PIN_DATA, DHT_SENSOR_TYPE);
+DHT dht_2(DHT_2_PIN_DATA, DHT_SENSOR_TYPE);
+DHT dht_3(DHT_3_PIN_DATA, DHT_SENSOR_TYPE);
+DHT dht_4(DHT_4_PIN_DATA, DHT_SENSOR_TYPE);
 
 AccelStepper stepper(AccelStepper::DRIVER, STEPPER_PIN_STEP, STEPPER_PIN_DIR);
 LiquidCrystal_I2C lcd(LCD_ADDRESS, LCD_COLS, LCD_ROWS);
@@ -223,13 +203,6 @@ struct SharedState {
   bool automationCmdPending  = false;
 
   bool stepperRequestPending = false;
-
-  // Config anti-condensation reçue du serveur (voir getAutomationConfig())
-  bool  configPending             = false;
-  float cfgHumidityHeaterThreshold = 90.0f;
-  float cfgHumidityResetThreshold  = 85.0f;
-  unsigned long cfgHumidityHighSustainMs = 5UL * 60UL * 1000UL;
-  unsigned long cfgSensorCooldownMs      = 3UL * 60UL * 1000UL;
 };
 
 SharedState shared;
@@ -256,6 +229,22 @@ bool lcdBtnPendingCheck             = false;
 unsigned long stepperBtnTriggerTime = 0;
 unsigned long lcdBtnTriggerTime     = 0;
 
+// FIX SECURITE : etat de presence reelle du PCF8574 sur le bus I2C.
+// Tant que ce flag est false, on IGNORE toute lecture de bouton et
+// tout pilotage LED via le PCF8574 : un module debranche ne doit
+// jamais pouvoir simuler un appui bouton et lancer le moteur.
+bool pcf8574Connected             = false;
+unsigned long lastPcf8574CheckTime = 0;
+const unsigned long PCF8574_CHECK_INTERVAL = 1000; // ms — sonde la presence reguliement
+
+// Sonde legere et fiable : ACK I2C direct sur l'adresse du PCF8574.
+// Independant de la logique interne de la bibliotheque, donc marche
+// meme si le module a ete debranche apres le demarrage.
+bool probePCF8574Presence() {
+  Wire.beginTransmission(PCF8574_ADDRESS);
+  return (Wire.endTransmission() == 0);
+}
+
 // LCD log ring buffer
 char lcdLogBuffer[LCD_LOG_BUFFER_SIZE][LCD_COLS + 1];
 int  lcdLogCount = 0;
@@ -263,21 +252,12 @@ int  lcdLogIndex = 0;
 int  lcdLogStart = 0;
 unsigned long lastLogScroll = 0;
 
-// État de sécurité capteur (anti-condensation) — Core 1 uniquement
-enum SensorSafetyState { SAFETY_NORMAL, SAFETY_COOLDOWN };
-SensorSafetyState safetyState        = SAFETY_NORMAL;
-unsigned long     humidityHighSince  = 0;   // 0 = pas de dépassement RH>90% en cours
-unsigned long     cooldownStartTime  = 0;
-int               heaterConsecutiveTriggers = 0; // remis à 0 dès que RH redescend sous humidityResetThreshold
-bool              heaterEscalationAlert     = false; // true = chauffage inefficace après plusieurs tentatives
-
-// Historique des déclenchements chauffage, à des fins de diagnostic côté
-// serveur (repérer un pattern récurrent lié à un cycle jour/nuit, une
-// mauvaise ventilation, etc.). heaterTriggerCount ne se réinitialise
-// jamais pendant l'uptime (contrairement à heaterConsecutiveTriggers) ;
-// lastHeaterTriggerMillis vaut 0 tant qu'aucun déclenchement n'a eu lieu.
-unsigned long     heaterTriggerCount        = 0;
-unsigned long     lastHeaterTriggerMillis   = 0;
+// Mémorise le dernier index de cycle serveur ayant déclenché une rotation
+// stepper (Core 0 uniquement — networkTaskFunction/getStepperCommand). Voir
+// getStepperCommand() : sert à éviter de redéclencher une rotation à
+// chaque poll (~3s) tant que le serveur renvoie stepper=true pour la même
+// fenêtre de 2 minutes.
+long lastStepperCycleTriggered = -1;
 
 // ============================================================
 //  GESTION STEPPER / POWER (Core 1)
@@ -286,7 +266,7 @@ unsigned long     lastHeaterTriggerMillis   = 0;
 void enableStepper() {
   if (!stepperEnabled) {
     digitalWrite(STEPPER_ENABLE_PIN, STEPPER_ENABLE_ACTIVE_STATE);
-    delay(20); // Stabilisation du courant avant le premier pas
+    delay(20); // Stabilisation du courant avant le premier pas (aligné sur le test validé)
     stepperEnabled = true;
   }
 }
@@ -382,8 +362,6 @@ void displayStatusOnLCD(float avgTemp, float avgHumid) {
 
   if (autonomousMode) {
     snprintf(line0, sizeof(line0), "AUTO W:%s S:%s", wifiState, stepperMoving ? "ON" : "OFF");
-  } else if (safetyState == SAFETY_COOLDOWN) {
-    snprintf(line0, sizeof(line0), "PAUSE capteur..");
   } else {
     snprintf(line0, sizeof(line0), "T:%.0f H:%d W:%s", avgTemp, (int)avgHumid, wifiState);
   }
@@ -399,6 +377,7 @@ void displayStatusOnLCD(float avgTemp, float avgHumid) {
 // ============================================================
 
 void buildServerUrl(const char* endpoint, char* output, size_t size) {
+  // Le backend FastAPI est exposé avec le préfixe /api
   snprintf(output, size, "http://%s:%d/api%s", serverIP, serverPort, endpoint);
 }
 
@@ -408,6 +387,12 @@ void connectWiFi() {
   }
 
   WiFi.mode(WIFI_STA);
+  // Réduit la puissance d'émission WiFi pour limiter les pics de courant
+  // (jusqu'à ~400-500mA en pleine puissance) qui peuvent faire chuter le
+  // rail 3.3V sous le seuil du détecteur de brownout sur une alimentation
+  // USB faible/longue. Ce n'est qu'une mitigation logicielle : le vrai fix
+  // reste une alimentation capable de fournir les pics de courant (voir
+  // note plus bas) + un condensateur de découplage proche de l'ESP32.
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
   WiFi.setHostname(HOSTNAME);
   Serial.println(F("Connexion WiFi..."));
@@ -415,8 +400,9 @@ void connectWiFi() {
 
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_TIMEOUT) {
-    vTaskDelay(pdMS_TO_TICKS(500));
-    esp_task_wdt_reset();
+    vTaskDelay(pdMS_TO_TICKS(500)); 
+    // FIX 2 : Feed du WDT dans la boucle d'attente WiFi pour éviter le reset intempestif
+    esp_task_wdt_reset(); 
     Serial.print(".");
   }
 
@@ -587,10 +573,30 @@ bool getStepperCommand() {
     JsonDocument doc;
     DeserializationError error = deserializeJson(doc, response);
     if (!error) {
-      if (doc["stepper"] | false) {
+      bool stepperCmd    = doc["stepper"] | false;
+      bool hasCycleField = doc["cycle"].is<long>();
+      long cycleIndex    = hasCycleField ? doc["cycle"].as<long>() : -2;
+
+      // Le serveur renvoie stepper=true pendant toute une fenêtre de 2
+      // minutes (voir get_automation_stepper côté backend). Une rotation
+      // ne prenant que quelques secondes, sans ce garde-fou l'ESP32
+      // redéclencherait une nouvelle rotation à CHAQUE poll (~3s) tant que
+      // la fenêtre reste active — soit une dizaine de rotations au lieu
+      // d'une seule. "cycle" identifie la fenêtre : on ne déclenche que si
+      // elle diffère de la dernière déjà exécutée.
+      // Repli : si le backend n'envoie pas encore "cycle" (ancienne
+      // version non mise à jour), on retombe sur l'ancien comportement
+      // (déclenche à chaque poll) plutôt que de bloquer silencieusement
+      // le stepper.
+      bool shouldTrigger = stepperCmd && (!hasCycleField || cycleIndex != lastStepperCycleTriggered);
+
+      if (shouldTrigger) {
         xSemaphoreTake(stateMutex, portMAX_DELAY);
         shared.stepperRequestPending = true;
         xSemaphoreGive(stateMutex);
+        if (hasCycleField) {
+          lastStepperCycleTriggered = cycleIndex;
+        }
         pushLCDLog("Stepper ON (srv)");
       }
       http.end();
@@ -598,65 +604,6 @@ bool getStepperCommand() {
     }
     pushLCDLog("JSON stepper err");
   } else {
-    pushLCDLog("Server NOK");
-  }
-
-  http.end();
-  return false;
-}
-
-// Récupère à distance les seuils anti-condensation (voir SÉCURITÉ CAPTEUR
-// plus haut). Endpoint optionnel : si le serveur ne l'implémente pas
-// (404) ou renvoie un JSON incomplet, on garde simplement les valeurs
-// actuelles — pas d'urgence, ce n'est pas un endpoint de sécurité vitale.
-// JSON attendu, tous les champs optionnels :
-// {
-//   "humidity_heater_threshold": 90.0,
-//   "humidity_reset_threshold":  85.0,
-//   "humidity_high_sustain_min": 5,
-//   "sensor_cooldown_min":       3
-// }
-bool getAutomationConfig() {
-  if (WiFi.status() != WL_CONNECTED) return false;
-
-  WiFiClient wifiClient;
-  HTTPClient http;
-  char url[128];
-  buildServerUrl("/sensor/automation/config", url, sizeof(url));
-  http.setTimeout(HTTP_TIMEOUT);
-  http.begin(wifiClient, url);
-  http.addHeader("x-api-key", apiKey);
-  int code = http.GET();
-
-  if (code == HTTP_CODE_OK) {
-    String response = http.getString();
-    JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, response);
-    if (!error) {
-      xSemaphoreTake(stateMutex, portMAX_DELAY);
-      if (doc["humidity_heater_threshold"].is<float>()) {
-        shared.cfgHumidityHeaterThreshold = doc["humidity_heater_threshold"].as<float>();
-      }
-      if (doc["humidity_reset_threshold"].is<float>()) {
-        shared.cfgHumidityResetThreshold = doc["humidity_reset_threshold"].as<float>();
-      }
-      if (doc["humidity_high_sustain_min"].is<float>()) {
-        shared.cfgHumidityHighSustainMs = (unsigned long)(doc["humidity_high_sustain_min"].as<float>() * 60000.0f);
-      }
-      if (doc["sensor_cooldown_min"].is<float>()) {
-        shared.cfgSensorCooldownMs = (unsigned long)(doc["sensor_cooldown_min"].as<float>() * 60000.0f);
-      }
-      shared.configPending = true;
-      xSemaphoreGive(stateMutex);
-
-      Serial.println(F("Config anti-condensation recue du serveur"));
-      http.end();
-      return true;
-    }
-    pushLCDLog("JSON config err");
-  } else if (code != HTTP_CODE_NOT_FOUND) {
-    // 404 = endpoint non implémenté côté serveur, pas une vraie erreur —
-    // on ne pollue pas les logs/LCD pour ça.
     pushLCDLog("Server NOK");
   }
 
@@ -672,7 +619,6 @@ void networkTaskFunction(void* pvParameters) {
 
   unsigned long lastAutomationPoll   = 0;
   unsigned long lastReconnectAttempt = 0;
-  unsigned long lastConfigPoll       = 0;
 
   connectWiFi();
 
@@ -716,11 +662,6 @@ void networkTaskFunction(void* pvParameters) {
         getAutomationStatus();
         getStepperCommand();
       }
-
-      if (now - lastConfigPoll >= CONFIG_POLL_INTERVAL) {
-        lastConfigPoll = now;
-        getAutomationConfig();
-      }
     }
 
     vTaskDelay(pdMS_TO_TICKS(50));
@@ -738,7 +679,7 @@ void applyBackupLogic(float avgTemp, float avgHumid) {
     } else if (avgTemp > TEMP_TARGET) {
       fanOn = false;
     }
-    digitalWrite(FAN_PIN, fanOn ? HIGH : LOW);
+    digitalWrite(FAN_PIN, fanOn ? RELAY_ACTIVE_STATE : RELAY_INACTIVE_STATE);
   }
 
   if (avgHumid > 0.0f) {
@@ -747,124 +688,17 @@ void applyBackupLogic(float avgTemp, float avgHumid) {
     } else if (avgHumid > HUMIDITY_TARGET) {
       humidifierOn = false;
     }
-    digitalWrite(HUMIDIFIER_PIN, humidifierOn ? HIGH : LOW);
+    digitalWrite(HUMIDIFIER_PIN, humidifierOn ? RELAY_ACTIVE_STATE : RELAY_INACTIVE_STATE);
   }
 }
 
-// ============================================================
-//  MULTIPLEXEUR I2C (TCA9548A) & CAPTEURS SHT45 (Core 1)
-// ============================================================
-
-// Sélectionne le canal actif du TCA9548A. Toutes les transactions I2C
-// suivantes sur le bus principal sont redirigées vers ce canal jusqu'au
-// prochain appel. La LCD (adresse 0x27, hors mux) n'est pas affectée.
-// Retourne false si le mux lui-même ne répond pas (câblage, canal grillé,
-// adresse erronée) — sans ce contrôle, on lirait silencieusement le mauvais
-// capteur, ou rien, en pensant avoir changé de canal.
-bool tcaSelectChannel(uint8_t channel) {
-  if (channel > 7) return false;
-  Wire.beginTransmission(TCA9548A_ADDRESS);
-  Wire.write(1 << channel);
-  return Wire.endTransmission() == 0;
-}
-
-// Diagnostic optionnel (DEBUG_I2C_SCAN=1) : scanne le bus principal, puis
-// chaque canal du TCA9548A, et imprime les adresses trouvées. À lancer une
-// fois avant le premier essai réel pour confirmer le câblage — on doit
-// voir 0x70 (mux) et 0x27 (LCD) sur le bus principal, et 0x44 (SHT45) sur
-// chaque canal câblé. N'interrompt pas le boot normal, juste informatif.
-void scanI2CBus() {
-  Serial.println(F("\n--- Scan I2C : bus principal ---"));
-  int found = 0;
-  for (uint8_t addr = 1; addr < 127; addr++) {
-    Wire.beginTransmission(addr);
-    if (Wire.endTransmission() == 0) {
-      Serial.printf("  Peripherique trouve a 0x%02X\n", addr);
-      found++;
-    }
-  }
-  if (found == 0) Serial.println(F("  Aucun peripherique trouve — verifier cablage SDA/SCL/alim"));
-
-  Serial.println(F("--- Scan I2C : canaux du TCA9548A (0-7) ---"));
-  for (uint8_t ch = 0; ch < 8; ch++) {
-    if (!tcaSelectChannel(ch)) {
-      Serial.printf("  Canal %d: mux injoignable, scan annule\n", ch);
-      continue;
-    }
-    delay(5);
-    bool any = false;
-    for (uint8_t addr = 1; addr < 127; addr++) {
-      if (addr == TCA9548A_ADDRESS) continue; // évite de re-détecter le mux lui-même
-      Wire.beginTransmission(addr);
-      if (Wire.endTransmission() == 0) {
-        Serial.printf("  Canal %d -> peripherique a 0x%02X\n", ch, addr);
-        any = true;
-      }
-    }
-    if (!any) Serial.printf("  Canal %d -> rien detecte\n", ch);
-  }
-  Serial.println(F("--- Fin du scan I2C ---\n"));
-}
-
-bool initSHT45Sensors() {
-  Wire.begin(I2C_SDA, I2C_SCL);
-
-#if DEBUG_I2C_SCAN
-  scanI2CBus();
-#endif
-
-  bool anyOk = false;
-  for (int i = 0; i < NUM_SENSORS; i++) {
-    if (!tcaSelectChannel(SENSOR_MUX_CHANNEL[i])) {
-      sensorAvailable[i] = false;
-      Serial.printf("TCA9548A: canal %d injoignable (mux non detecte ou cable) — capteur #%d ignore\n",
-                    SENSOR_MUX_CHANNEL[i], i + 1);
-      continue;
-    }
-    delay(5); // laisser le mux basculer avant d'interroger le capteur
-
-    if (sht45Sensors[i].begin(&Wire)) {
-      sht45Sensors[i].setPrecision(SHT4X_HIGH_PRECISION);
-      sht45Sensors[i].setHeater(SHT4X_NO_HEATER);
-      sensorAvailable[i] = true;
-      anyOk = true;
-      Serial.printf("SHT45 #%d (mux ch%d) detecte\n", i + 1, SENSOR_MUX_CHANNEL[i]);
-    } else {
-      sensorAvailable[i] = false;
-      Serial.printf("SHT45 #%d (mux ch%d) non detecte\n", i + 1, SENSOR_MUX_CHANNEL[i]);
-    }
-  }
-  return anyOk;
-}
-
-SensorData readSHT45(int idx) {
+SensorData readSensor(DHT& dht, int num) {
   SensorData data;
-
-  if (!sensorAvailable[idx]) {
-    data.valid = false;
-    return data;
-  }
-
-  if (!tcaSelectChannel(SENSOR_MUX_CHANNEL[idx])) {
-    Serial.printf("TCA9548A: canal %d injoignable au moment de la lecture (capteur #%d)\n",
-                  SENSOR_MUX_CHANNEL[idx], idx + 1);
-    data.valid = false;
-    return data;
-  }
-
-  sensors_event_t humidityEvt, tempEvt;
-  bool ok = sht45Sensors[idx].getEvent(&humidityEvt, &tempEvt);
-
-  if (ok) {
-    data.temperature = tempEvt.temperature;
-    data.humidity    = humidityEvt.relative_humidity;
-    data.valid       = !isnan(data.temperature) && !isnan(data.humidity);
-  } else {
-    data.valid = false;
-  }
-
+  data.humidity    = dht.readHumidity();
+  data.temperature = dht.readTemperature();
+  data.valid       = !isnan(data.humidity) && !isnan(data.temperature);
   if (!data.valid) {
-    Serial.printf("Capteur SHT45 #%d: ERREUR de lecture\n", idx + 1);
+    Serial.printf("Capteur %d: ERREUR\n", num);
     data.temperature = 0.0f;
     data.humidity    = 0.0f;
   }
@@ -890,109 +724,6 @@ void calculateAverages(SensorData sensors[], int count, float& avgTemp, float& a
   avgHumid = valid > 0 ? hTotal / valid : 0.0f;
 }
 
-// Déclenche une impulsion de chauffage interne sur chaque capteur
-// disponible, l'un après l'autre. ATTENTION : l'appel getEvent() avec
-// chauffage actif est bloquant côté librairie Adafruit_SHT4x pendant
-// toute la durée du réglage choisi (jusqu'à ~1.1s avec SHT4X_HIGH_HEATER_1S).
-// Sur 4 capteurs, ça peut donc bloquer loop() jusqu'à ~4-5s d'affilée —
-// acceptable car l'événement est rare (RH>90% pendant 5 min), mais on
-// nourrit le watchdog entre chaque capteur par précaution.
-void triggerSensorHeaterAll() {
-  for (int i = 0; i < NUM_SENSORS; i++) {
-    if (!sensorAvailable[i]) continue;
-
-    esp_task_wdt_reset();
-    if (!tcaSelectChannel(SENSOR_MUX_CHANNEL[i])) {
-      Serial.printf("TCA9548A: canal %d injoignable — chauffage capteur #%d ignore\n",
-                    SENSOR_MUX_CHANNEL[i], i + 1);
-      continue;
-    }
-
-    sensors_event_t humidityEvt, tempEvt;
-    sht45Sensors[i].setHeater(SHT45_HEATER_SETTING);
-    sht45Sensors[i].getEvent(&humidityEvt, &tempEvt);   // exécute l'impulsion (bloquant, courte durée)
-    sht45Sensors[i].setHeater(SHT4X_NO_HEATER);         // retour en lecture normale
-
-    Serial.printf("  Impulsion chauffage capteur #%d (mux ch%d) terminee\n", i + 1, SENSOR_MUX_CHANNEL[i]);
-  }
-}
-
-// Surveillance non-bloquante de l'humidité (millis()) : si la moyenne
-// dépasse 90% pendant au moins 5 minutes consécutives, on déclenche le
-// chauffage anti-condensation sur tous les capteurs puis on bascule en
-// pause (SAFETY_COOLDOWN) pour laisser le capteur se stabiliser avant de
-// reprendre les lectures normales.
-// Retourne true si les lectures sont autorisées ce cycle, false si le
-// système est en pause de refroidissement.
-bool updateSensorSafety(float lastAvgHumid, unsigned long now) {
-  if (safetyState == SAFETY_COOLDOWN) {
-    if (now - cooldownStartTime >= sensorCooldownMs) {
-      safetyState = SAFETY_NORMAL;
-      humidityHighSince = 0;
-      Serial.println(F("Fin de pause — reprise des lectures capteurs"));
-      pushLCDLog("Capteur refroidi");
-    } else {
-      return false; // toujours en pause, pas de nouvelle lecture ce cycle
-    }
-  }
-
-  if (lastAvgHumid > humidityHeaterThreshold) {
-    if (humidityHighSince == 0) {
-      humidityHighSince = now;
-      Serial.println(F("RH > seuil detecte — surveillance demarree"));
-    } else if (now - humidityHighSince >= humidityHighSustainMs) {
-
-      if (heaterConsecutiveTriggers >= HEATER_MAX_CONSECUTIVE_TRIGGERS) {
-        // Le chauffage n'a pas suffi après plusieurs tentatives : on ne
-        // rechauffe plus en boucle, on remonte une alerte à la place.
-        // L'humidité ambiante reste élevée -> problème probable côté
-        // ventilation/étanchéité de l'incubateur, pas côté capteur.
-        if (!heaterEscalationAlert) {
-          Serial.println(F("!!! ALERTE: RH>seuil persiste malgre plusieurs chauffages consecutifs !!!"));
-          pushLCDLog("ALERTE humidite!");
-        }
-        heaterEscalationAlert = true;
-        // On laisse quand même les lectures continuer normalement pour
-        // remonter la valeur réelle au serveur/LED (pas de nouvelle pause).
-        return true;
-      }
-
-      Serial.println(F("RH > seuil soutenue -> declenchement chauffage capteur"));
-      pushLCDLog("Chauffage capteur");
-
-      triggerSensorHeaterAll();
-      heaterConsecutiveTriggers++;
-      heaterTriggerCount++;
-      lastHeaterTriggerMillis = now;
-
-      safetyState       = SAFETY_COOLDOWN;
-      cooldownStartTime = millis();
-      humidityHighSince = 0;
-      pushLCDLog("Pause refroidiss.");
-      return false; // on vient de chauffer, pas de lecture ce cycle-ci
-    }
-  } else if (lastAvgHumid < humidityResetThreshold) {
-    // Marge d'hystérésis : on ne réarme le compteur/l'alerte que
-    // lorsque RH est vraiment redescendue, pas au premier petit creux
-    // sous le seuil haut qui pourrait n'être que du bruit de mesure.
-    humidityHighSince         = 0;
-    heaterConsecutiveTriggers = 0;
-    if (heaterEscalationAlert) {
-      heaterEscalationAlert = false;
-      Serial.println(F("RH revenue a la normale — alerte humidite levee"));
-      pushLCDLog("Humidite OK");
-    }
-  }
-  // Entre humidityResetThreshold et humidityHeaterThreshold : zone morte
-  // volontaire, on ne touche ni au compteur ni à l'alerte.
-
-  return true;
-}
-
-// ============================================================
-//  LEDS DE STATUT (Core 1)
-// ============================================================
-
 void initLEDs() {
   const uint8_t pins[] = { LED_GREEN_PIN, LED_ORANGE_PIN, LED_RED_PIN, LED_BLUE_PIN };
   for (uint8_t p : pins) {
@@ -1002,6 +733,7 @@ void initLEDs() {
 }
 
 void setAllLEDsOff() {
+  if (!pcf8574Connected) return;
   pcf8574.digitalWrite(LED_GREEN_PIN,  LED_INACTIVE_STATE);
   pcf8574.digitalWrite(LED_ORANGE_PIN, LED_INACTIVE_STATE);
   pcf8574.digitalWrite(LED_RED_PIN,    LED_INACTIVE_STATE);
@@ -1009,19 +741,16 @@ void setAllLEDsOff() {
 }
 
 void updateStatusLEDs(float avgTemp, float avgHumid, bool serverOk) {
+  // SECURITE : pas de PCF8574 => pas de tentative d'ecriture I2C inutile
+  // (evite de bloquer sur des transactions qui vont echouer a chaque tour).
+  if (!pcf8574Connected) return;
+
   setAllLEDsOff();
 
   if (!serverOk || autonomousMode) {
     pcf8574.digitalWrite(LED_BLUE_PIN, LED_ACTIVE_STATE);
   }
   if (avgTemp <= 0.0f || avgHumid <= 0.0f) {
-    pcf8574.digitalWrite(LED_RED_PIN, LED_ACTIVE_STATE);
-    return;
-  }
-
-  if (heaterEscalationAlert) {
-    // Alerte prioritaire : chauffage anti-condensation inefficace après
-    // plusieurs tentatives -> probable souci de ventilation/étanchéité.
     pcf8574.digitalWrite(LED_RED_PIN, LED_ACTIVE_STATE);
     return;
   }
@@ -1038,24 +767,24 @@ void updateStatusLEDs(float avgTemp, float avgHumid, bool serverOk) {
   }
 }
 
-// ============================================================
-//  BOUTONS (debounce non-bloquant, Core 1)
-// ============================================================
-
+// FIX 3 : Debounce 100% NON-BLOQUANT pour éliminer les micro-saccades moteur
 void checkStepperButton() {
+  // Bouton moteur sur GPIO ESP32 direct (pull-down externe) — independant
+  // du PCF8574, donc pas de garde pcf8574Connected ici : ce bouton doit
+  // continuer a fonctionner meme si le PCF8574/LEDs restent hors service.
   const unsigned long DEBOUNCE = 200;
   const unsigned long CONFIRM_TIME = 20;
   unsigned long now = millis();
 
   if (!stepperBtnPendingCheck) {
-    if (pcf8574.digitalRead(BUTTON_STEPPER_PIN) == LOW && (now - lastButtonPress > DEBOUNCE)) {
+    if (digitalRead(BUTTON_STEPPER_ESP_PIN) == HIGH && (now - lastButtonPress > DEBOUNCE)) {
       stepperBtnPendingCheck = true;
       stepperBtnTriggerTime = now;
     }
   } else {
     if (now - stepperBtnTriggerTime >= CONFIRM_TIME) {
       stepperBtnPendingCheck = false;
-      if (pcf8574.digitalRead(BUTTON_STEPPER_PIN) == LOW) {
+      if (digitalRead(BUTTON_STEPPER_ESP_PIN) == HIGH) {
         lastButtonPress = now;
         pushLCDLog("Stepper manuel");
         startStepperRotation("bouton");
@@ -1065,6 +794,9 @@ void checkStepperButton() {
 }
 
 void checkLCDScrollButton() {
+  // Meme securite que checkStepperButton() : pas de PCF8574, pas de lecture.
+  if (!pcf8574Connected) return;
+
   const unsigned long DEBOUNCE = 200;
   const unsigned long CONFIRM_TIME = 20;
   unsigned long now = millis();
@@ -1089,9 +821,6 @@ void applyNetworkOutputs() {
   bool localAutonomous, localServerConnected, localWifiConnected;
   bool automationPending, fanCmd = false, humidCmd = false;
   bool stepperPending;
-  bool configPending = false;
-  float cfgHeaterThresh = 0, cfgResetThresh = 0;
-  unsigned long cfgSustainMs = 0, cfgCooldownMs = 0;
 
   xSemaphoreTake(stateMutex, portMAX_DELAY);
   localAutonomous      = shared.autonomousMode;
@@ -1107,14 +836,6 @@ void applyNetworkOutputs() {
   if (stepperPending) {
     shared.stepperRequestPending = false;
   }
-  configPending = shared.configPending;
-  if (configPending) {
-    cfgHeaterThresh = shared.cfgHumidityHeaterThreshold;
-    cfgResetThresh  = shared.cfgHumidityResetThreshold;
-    cfgSustainMs    = shared.cfgHumidityHighSustainMs;
-    cfgCooldownMs   = shared.cfgSensorCooldownMs;
-    shared.configPending = false;
-  }
   xSemaphoreGive(stateMutex);
 
   autonomousMode  = localAutonomous;
@@ -1122,8 +843,8 @@ void applyNetworkOutputs() {
   wifiConnected   = localWifiConnected;
 
   if (!autonomousMode && automationPending) {
-    digitalWrite(FAN_PIN,        fanCmd   ? HIGH : LOW);
-    digitalWrite(HUMIDIFIER_PIN, humidCmd ? HIGH : LOW);
+    digitalWrite(FAN_PIN,        fanCmd   ? RELAY_ACTIVE_STATE : RELAY_INACTIVE_STATE);
+    digitalWrite(HUMIDIFIER_PIN, humidCmd ? RELAY_ACTIVE_STATE : RELAY_INACTIVE_STATE);
     fanOn        = fanCmd;
     humidifierOn = humidCmd;
   }
@@ -1131,20 +852,10 @@ void applyNetworkOutputs() {
   if (stepperPending) {
     startStepperRotation("serveur");
   }
-
-  if (configPending) {
-    humidityHeaterThreshold = cfgHeaterThresh;
-    humidityResetThreshold  = cfgResetThresh;
-    humidityHighSustainMs   = cfgSustainMs;
-    sensorCooldownMs        = cfgCooldownMs;
-    Serial.printf("Nouveaux seuils anti-condensation: seuil=%.1f%% reset=%.1f%% sustain=%lums cooldown=%lums\n",
-                  humidityHeaterThreshold, humidityResetThreshold, humidityHighSustainMs, sensorCooldownMs);
-    pushLCDLog("Config maj (srv)");
-  }
 }
 
 void printStatus(SensorData sensors[], int count, float avgTemp, float avgHumid, int failed) {
-  Serial.println(F("\n========== STATUS (SHT45) =========="));
+  Serial.println(F("\n========== STATUS =========="));
   for (int i = 0; i < count; i++) {
     Serial.printf("  Capteur %d: %.1f°C, %.1f%% %s\n",
                   i + 1, sensors[i].temperature, sensors[i].humidity,
@@ -1160,24 +871,29 @@ void printStatus(SensorData sensors[], int count, float avgTemp, float avgHumid,
   if (autonomousMode) {
     Serial.println(F("  >>> MODE AUTONOME ACTIF <<<"));
   }
-  if (safetyState == SAFETY_COOLDOWN) {
-    Serial.println(F("  >>> PAUSE ANTI-CONDENSATION (chauffage effectue) <<<"));
-  }
-  Serial.println(F("=====================================\n"));
+  Serial.println(F("============================\n"));
 }
 
 void setup() {
+#if DEBUG_DISABLE_BOD
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // ⚠️ diagnostic seulement, voir note plus haut
+#endif
+
   Serial.begin(115200);
   delay(1000);
 
-  Serial.println(F("\n=== ESP32 Incubator Controller SHT45 + TCA9548A ==="));
+  Serial.println(F("\n=== ESP32 Incubator Controller v4.2 ==="));
 
-  // Les mutex doivent être créés en tout premier — voir main.cpp pour le
-  // détail : pushLCDLog()/sendDataToServer() en dépendent dès l'init.
+  // Les mutex doivent être créés en tout premier : pushLCDLog() (appelée dès
+  // le premier lcd.init()/printLCDLine ci-dessous) prend lcdLogMutex, et
+  // sendDataToServer()/checkAutonomousMode_locked() prennent stateMutex. Tant
+  // que ces handles valent NULL (valeur par défaut avant création), tout
+  // xSemaphoreTake() dessus déclenche l'assertion FreeRTOS
+  // "xQueueSemaphoreTake ... (( pxQueue ))" et fait rebooter la carte.
   stateMutex  = xSemaphoreCreateMutex();
   lcdLogMutex = xSemaphoreCreateMutex();
 
-  // Rétrocompatibilité multi-versions ESP32 Arduino Core (v2.x vs v3.x)
+  // FIX 4 : Rétrocompatibilité multi-versions ESP32 Arduino Core (v2.x vs v3.x)
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
   esp_task_wdt_config_t twdt_config = {
       .timeout_ms = WDT_TIMEOUT_SEC * 1000,
@@ -1194,45 +910,48 @@ void setup() {
   pinMode(STEPPER_ENABLE_PIN, OUTPUT);
   disableStepper();
 
-  // Bus I2C partage (LCD + PCF8574 + TCA9548A/SHT45). Initialise ici,
-  // independamment de TEST_MODE_SKIP_SENSORS — LEDs/boutons doivent
-  // fonctionner meme si les capteurs sont desactives pour un test.
-  // Rappel sans effet : initSHT45Sensors() rappelle Wire.begin() plus bas,
-  // ce qui est sans risque sur l'ESP32.
+  // Bus I2C partage : LCD + PCF8574 (LEDs/boutons). A initialiser avant tout
+  // accès à l'un ou l'autre.
   Wire.begin(I2C_SDA, I2C_SCL);
   if (!pcf8574.begin()) {
     Serial.println(F("ATTENTION: PCF8574 (LEDs/boutons) non detecte!"));
   }
+  pcf8574Connected = probePCF8574Presence();
+  if (!pcf8574Connected) {
+    Serial.println(F("ATTENTION: PCF8574 absent du bus I2C — boutons/LEDs desactives par securite."));
+  }
 
   lcd.init();
   lcd.backlight();
-  printLCDLine(0, "ESP32 SHT45");
+  printLCDLine(0, "ESP32 Sensor v4");
   printLCDLine(1, "Init...");
   pushLCDLog("Initializing...");
 
 #if !TEST_MODE_SKIP_SENSORS
-  if (!initSHT45Sensors()) {
-    Serial.println(F("ATTENTION: Aucun capteur SHT45 detecte!"));
-    pushLCDLog("Aucun capteur!");
-  }
+  dht_1.begin();
+  dht_2.begin();
+  dht_3.begin();
+  dht_4.begin();
 #endif
 
   stepper.setMaxSpeed(STEPPER_MAX_SPEED);
   stepper.setAcceleration(STEPPER_ACCELERATION);
 
   pinMode(FAN_PIN,        OUTPUT);
-  digitalWrite(FAN_PIN,        LOW);
+  digitalWrite(FAN_PIN,        RELAY_INACTIVE_STATE);
   pinMode(HUMIDIFIER_PIN, OUTPUT);
-  digitalWrite(HUMIDIFIER_PIN, LOW);
+  pinMode(BUTTON_STEPPER_ESP_PIN, INPUT); // pull-down externe : LOW au repos
+  digitalWrite(HUMIDIFIER_PIN, RELAY_INACTIVE_STATE);
 
-  initLEDs();
-  pcf8574.digitalWrite(LED_BLUE_PIN, LED_ACTIVE_STATE);
+  if (pcf8574Connected) {
+    initLEDs();
+    pcf8574.digitalWrite(LED_BLUE_PIN, LED_ACTIVE_STATE);
 
-  // Boutons sur PCF8574 : mode INPUT active la pull-up faible interne
-  // (quasi-bidirectionnel), pas besoin de pull-up externe dans la plupart
-  // des cas.
-  pcf8574.pinMode(BUTTON_STEPPER_PIN,    INPUT);
-  pcf8574.pinMode(BUTTON_LCD_SCROLL_PIN, INPUT);
+    // Bouton LCD scroll seul reste sur le PCF8574 (mode INPUT = pull-up
+    // faible interne, quasi-bidirectionnel). Le bouton moteur est
+    // maintenant sur GPIO ESP32 direct, voir BUTTON_STEPPER_ESP_PIN.
+    pcf8574.pinMode(BUTTON_LCD_SCROLL_PIN, INPUT);
+  }
 
   xTaskCreatePinnedToCore(
     networkTaskFunction,
@@ -1248,7 +967,7 @@ void setup() {
 }
 
 void loop() {
-  esp_task_wdt_reset();
+  esp_task_wdt_reset(); 
 
   static unsigned long lastSendTime     = 0;
   static unsigned long lastSlowTaskTime = 0;
@@ -1269,85 +988,65 @@ void loop() {
     lastSendTime = now;
 
 #if TEST_MODE_SKIP_SENSORS
+    // Pas de lecture DHT — juste un heartbeat pour confirmer que loop()
+    // tourne normalement pendant le test du stepper.
     Serial.println(F("[TEST_MODE_SKIP_SENSORS] capteurs desactives — test stepper en cours"));
 #else
-    // La décision de lire ou non se base sur la MOYENNE PRÉCÉDENTE
-    // (avgHumidity du cycle d'avant) : c'est cette valeur qui alimente la
-    // surveillance non-bloquante par millis(). Si le système est en pause
-    // de refroidissement, on saute la lecture ce cycle-ci.
-    bool readsAllowed = updateSensorSafety(avgHumidity, now);
+    SensorData sensors[4];
+    sensors[0] = readSensor(dht_1, 1);
+    sensors[1] = readSensor(dht_2, 2);
+    sensors[2] = readSensor(dht_3, 3);
+    sensors[3] = readSensor(dht_4, 4);
 
-    if (readsAllowed) {
-      SensorData sensors[NUM_SENSORS];
-      for (int i = 0; i < NUM_SENSORS; i++) {
-        sensors[i] = readSHT45(i);
-      }
+    calculateAverages(sensors, 4, avgTemperature, avgHumidity, numFailedSensors);
 
-      calculateAverages(sensors, NUM_SENSORS, avgTemperature, avgHumidity, numFailedSensors);
-
-      JsonDocument payload;
-      for (int i = 0; i < NUM_SENSORS; i++) {
-        char key[10];
-        snprintf(key, sizeof(key), "sensor_%d", i + 1);
-        payload[key]["temperature"] = sensors[i].temperature;
-        payload[key]["humidity"]    = sensors[i].humidity;
-        payload[key]["valid"]       = sensors[i].valid;
-        payload[key]["type"]        = "SHT45";
-      }
-      payload["average_temperature"] = avgTemperature;
-      payload["average_humidity"]    = avgHumidity;
-      payload["fan_status"]          = fanOn;
-      payload["humidifier_status"]   = humidifierOn;
-      payload["numFailedSensors"]    = numFailedSensors;
-      payload["sensor_paused"]       = false;
-      payload["heater_escalation"]   = heaterEscalationAlert;
-      payload["heater_trigger_count"] = heaterTriggerCount;
-      payload["ms_since_last_heater_trigger"] =
-          (lastHeaterTriggerMillis == 0) ? -1 : (long)(now - lastHeaterTriggerMillis);
-
-      String jsonPayload;
-      serializeJson(payload, jsonPayload);
-
-      if (!autonomousMode) {
-        xSemaphoreTake(stateMutex, portMAX_DELAY);
-        shared.pendingPayload   = jsonPayload;
-        shared.sensorDataReady  = true;
-        xSemaphoreGive(stateMutex);
-      }
-
-      if (autonomousMode || !serverConnected) {
-        applyBackupLogic(avgTemperature, avgHumidity);
-      }
-
-      printStatus(sensors, NUM_SENSORS, avgTemperature, avgHumidity, numFailedSensors);
-    } else {
-      // En pause de refroidissement : on garde les dernières valeurs
-      // connues (avgTemperature/avgHumidity inchangées) et on informe le
-      // serveur/LCD que les lectures sont temporairement suspendues.
-      Serial.println(F("[PAUSE] lecture capteurs suspendue (refroidissement anti-condensation)"));
-
-      JsonDocument payload;
-      payload["average_temperature"] = avgTemperature;
-      payload["average_humidity"]    = avgHumidity;
-      payload["fan_status"]          = fanOn;
-      payload["humidifier_status"]   = humidifierOn;
-      payload["sensor_paused"]       = true;
-      payload["heater_escalation"]   = heaterEscalationAlert;
-      payload["heater_trigger_count"] = heaterTriggerCount;
-      payload["ms_since_last_heater_trigger"] =
-          (lastHeaterTriggerMillis == 0) ? -1 : (long)(now - lastHeaterTriggerMillis);
-
-      String jsonPayload;
-      serializeJson(payload, jsonPayload);
-
-      if (!autonomousMode) {
-        xSemaphoreTake(stateMutex, portMAX_DELAY);
-        shared.pendingPayload   = jsonPayload;
-        shared.sensorDataReady  = true;
-        xSemaphoreGive(stateMutex);
-      }
+    JsonDocument payload;
+    for (int i = 0; i < 4; i++) {
+      char key[10];
+      snprintf(key, sizeof(key), "sensor_%d", i + 1);
+      payload[key]["temperature"] = sensors[i].temperature;
+      payload[key]["humidity"]    = sensors[i].humidity;
+      payload[key]["valid"]       = sensors[i].valid;
     }
+    payload["average_temperature"] = avgTemperature;
+    payload["average_humidity"]    = avgHumidity;
+    payload["fan_status"]          = fanOn;
+    payload["humidifier_status"]   = humidifierOn;
+    payload["numFailedSensors"]    = numFailedSensors;
+
+    String jsonPayload;
+    serializeJson(payload, jsonPayload);
+
+    if (!autonomousMode) {
+      xSemaphoreTake(stateMutex, portMAX_DELAY);
+      shared.pendingPayload   = jsonPayload;
+      shared.sensorDataReady  = true;
+      xSemaphoreGive(stateMutex);
+    }
+
+    if (autonomousMode || !serverConnected) {
+      applyBackupLogic(avgTemperature, avgHumidity);
+    }
+
+    printStatus(sensors, 4, avgTemperature, avgHumidity, numFailedSensors);
 #endif
+  }
+
+  // SECURITE : re-sonde la presence du PCF8574 regulierement. Si le
+  // module est debranche en cours de route, pcf8574Connected repasse a
+  // false et coupe immediatement la lecture des boutons/LEDs — un fil
+  // arrache ne doit jamais pouvoir faire tourner le moteur tout seul.
+  if (now - lastPcf8574CheckTime >= PCF8574_CHECK_INTERVAL) {
+    lastPcf8574CheckTime = now;
+    bool wasConnected = pcf8574Connected;
+    pcf8574Connected = probePCF8574Presence();
+    if (wasConnected && !pcf8574Connected) {
+      Serial.println(F("ATTENTION: PCF8574 deconnecte du bus I2C — LEDs/bouton LCD desactives."));
+    } else if (!wasConnected && pcf8574Connected) {
+      Serial.println(F("PCF8574 reconnecte — reinitialisation LEDs/bouton LCD."));
+      initLEDs();
+      pcf8574.pinMode(BUTTON_LCD_SCROLL_PIN, INPUT);
+    }
   }
 
   // Tâches secondaires d'affichage et boutons
