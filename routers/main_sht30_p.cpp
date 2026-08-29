@@ -253,6 +253,22 @@ unsigned long lastButtonPress       = 0;
 unsigned long lastScrollButtonPress = 0;
 bool stepperBtnPendingCheck         = false;
 bool lcdBtnPendingCheck             = false;
+
+// FIX SECURITE : etat de presence reelle du PCF8574 sur le bus I2C.
+// Tant que ce flag est false, on IGNORE toute lecture de bouton et
+// tout pilotage LED via le PCF8574 : un module debranche ne doit
+// jamais pouvoir simuler un appui bouton et lancer le moteur.
+bool pcf8574Connected              = false;
+unsigned long lastPcf8574CheckTime = 0;
+const unsigned long PCF8574_CHECK_INTERVAL = 1000; // ms — sonde la presence regulierement
+
+// Sonde legere et fiable : ACK I2C direct sur l'adresse du PCF8574.
+// Independant de la logique interne de la bibliotheque, donc marche
+// meme si le module a ete debranche apres le demarrage.
+bool probePCF8574Presence() {
+  Wire.beginTransmission(PCF8574_ADDRESS);
+  return (Wire.endTransmission() == 0);
+}
 unsigned long stepperBtnTriggerTime = 0;
 unsigned long lcdBtnTriggerTime     = 0;
 
@@ -1002,6 +1018,7 @@ void initLEDs() {
 }
 
 void setAllLEDsOff() {
+  if (!pcf8574Connected) return;
   pcf8574.digitalWrite(LED_GREEN_PIN,  LED_INACTIVE_STATE);
   pcf8574.digitalWrite(LED_ORANGE_PIN, LED_INACTIVE_STATE);
   pcf8574.digitalWrite(LED_RED_PIN,    LED_INACTIVE_STATE);
@@ -1009,6 +1026,9 @@ void setAllLEDsOff() {
 }
 
 void updateStatusLEDs(float avgTemp, float avgHumid, bool serverOk) {
+  // SECURITE : pas de PCF8574 => pas de tentative d'ecriture I2C inutile.
+  if (!pcf8574Connected) return;
+
   setAllLEDsOff();
 
   if (!serverOk || autonomousMode) {
@@ -1043,6 +1063,11 @@ void updateStatusLEDs(float avgTemp, float avgHumid, bool serverOk) {
 // ============================================================
 
 void checkStepperButton() {
+  // SECURITE : PCF8574 absent/debranche => on n'ecoute pas ce "bouton
+  // fantome". Sans ce garde, une lecture I2C echouee peut etre
+  // interpretee comme un appui permanent et declencher le moteur seul.
+  if (!pcf8574Connected) return;
+
   const unsigned long DEBOUNCE = 200;
   const unsigned long CONFIRM_TIME = 20;
   unsigned long now = millis();
@@ -1065,6 +1090,9 @@ void checkStepperButton() {
 }
 
 void checkLCDScrollButton() {
+  // Meme securite que checkStepperButton() : pas de PCF8574, pas de lecture.
+  if (!pcf8574Connected) return;
+
   const unsigned long DEBOUNCE = 200;
   const unsigned long CONFIRM_TIME = 20;
   unsigned long now = millis();
@@ -1203,6 +1231,10 @@ void setup() {
   if (!pcf8574.begin()) {
     Serial.println(F("ATTENTION: PCF8574 (LEDs/boutons) non detecte!"));
   }
+  pcf8574Connected = probePCF8574Presence();
+  if (!pcf8574Connected) {
+    Serial.println(F("ATTENTION: PCF8574 absent du bus I2C — boutons/LEDs desactives par securite."));
+  }
 
   lcd.init();
   lcd.backlight();
@@ -1225,14 +1257,16 @@ void setup() {
   pinMode(HUMIDIFIER_PIN, OUTPUT);
   digitalWrite(HUMIDIFIER_PIN, LOW);
 
-  initLEDs();
-  pcf8574.digitalWrite(LED_BLUE_PIN, LED_ACTIVE_STATE);
+  if (pcf8574Connected) {
+    initLEDs();
+    pcf8574.digitalWrite(LED_BLUE_PIN, LED_ACTIVE_STATE);
 
-  // Boutons sur PCF8574 : mode INPUT active la pull-up faible interne
-  // (quasi-bidirectionnel), pas besoin de pull-up externe dans la plupart
-  // des cas.
-  pcf8574.pinMode(BUTTON_STEPPER_PIN,    INPUT);
-  pcf8574.pinMode(BUTTON_LCD_SCROLL_PIN, INPUT);
+    // Boutons sur PCF8574 : mode INPUT active la pull-up faible interne
+    // (quasi-bidirectionnel), pas besoin de pull-up externe dans la plupart
+    // des cas.
+    pcf8574.pinMode(BUTTON_STEPPER_PIN,    INPUT);
+    pcf8574.pinMode(BUTTON_LCD_SCROLL_PIN, INPUT);
+  }
 
   xTaskCreatePinnedToCore(
     networkTaskFunction,
@@ -1353,6 +1387,25 @@ void loop() {
   // Tâches secondaires d'affichage et boutons
   if (now - lastSlowTaskTime >= 50) {
     lastSlowTaskTime = now;
+
+    // SECURITE : re-sonde la presence du PCF8574 regulierement. Si le
+    // module est debranche en cours de route, pcf8574Connected repasse a
+    // false et coupe immediatement la lecture des boutons/LEDs — un fil
+    // arrache ne doit jamais pouvoir faire tourner le moteur tout seul.
+    if (now - lastPcf8574CheckTime >= PCF8574_CHECK_INTERVAL) {
+      lastPcf8574CheckTime = now;
+      bool wasConnected = pcf8574Connected;
+      pcf8574Connected = probePCF8574Presence();
+      if (wasConnected && !pcf8574Connected) {
+        Serial.println(F("ATTENTION: PCF8574 deconnecte du bus I2C — boutons/LEDs desactives."));
+      } else if (!wasConnected && pcf8574Connected) {
+        Serial.println(F("PCF8574 reconnecte — reinitialisation LEDs/boutons."));
+        initLEDs();
+        pcf8574.pinMode(BUTTON_STEPPER_PIN,    INPUT);
+        pcf8574.pinMode(BUTTON_LCD_SCROLL_PIN, INPUT);
+      }
+    }
+
     checkStepperButton();
     checkLCDScrollButton();
     updateLCDScroll(now);
